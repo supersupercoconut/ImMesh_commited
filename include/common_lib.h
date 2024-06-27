@@ -150,6 +150,7 @@ struct hash< VOXEL_KEY >
 };
 } // namespace std
 
+// 这里保留了一帧图像数据的原因是 一段时间中可以只有一帧图像数据, 但是IMU帧率比较快,可以有更多数据
 struct MeasureGroup
 {
     double                              img_offset_time;

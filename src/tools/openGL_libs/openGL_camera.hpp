@@ -368,6 +368,8 @@ inline void load( Archive& ar, Cam_view& cam_view, const unsigned int /*version*
     }
 }
 
+/// @brief 作者自己开发的openGL中的camera框架
+
 struct GL_camera
 {
     // See the camera system in openGL: https://learnopengl.com/Getting-started/Camera

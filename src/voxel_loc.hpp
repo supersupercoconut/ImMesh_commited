@@ -94,7 +94,7 @@ typedef struct Plane
     Eigen::Matrix3d               m_covariance;
     Eigen::Matrix< double, 6, 6 > m_plane_var;
     float                         m_radius = 0;
-    float                         m_min_eigen_value = 1;
+    float                         m_min_eigen_value = 0.01;
     float                         m_d = 0;
     int                           m_points_size = 0;
     bool                          m_is_plane = false;

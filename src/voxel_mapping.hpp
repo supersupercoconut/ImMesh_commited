@@ -1,43 +1,6 @@
-/* 
-This code is the implementation of our paper "ImMesh: An Immediate LiDAR Localization and Meshing Framework".
+/// @brief 1. 进行 Voxel_mapping类的管理 2. 定义一些辅助函数(估计只是在这个文件中使用)
 
-The source code of this package is released under GPLv2 license. We only allow it free for personal and academic usage. 
 
-If you use any code of this repo in your academic research, please cite at least one of our papers:
-[1] Lin, Jiarong, et al. "Immesh: An immediate lidar localization and meshing framework." IEEE Transactions on Robotics
-   (T-RO 2023)
-[2] Yuan, Chongjian, et al. "Efficient and probabilistic adaptive voxel mapping for accurate online lidar odometry."
-    IEEE Robotics and Automation Letters (RA-L 2022)
-[3] Lin, Jiarong, and Fu Zhang. "R3LIVE: A Robust, Real-time, RGB-colored, LiDAR-Inertial-Visual tightly-coupled
-    state Estimation and mapping package." IEEE International Conference on Robotics and Automation (ICRA 2022)
-
-For commercial use, please contact me <ziv.lin.ljr@gmail.com> and Dr. Fu Zhang <fuzhang@hku.hk> to negotiate a 
-different license.
-
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
-
- 1. Redistributions of source code must retain the above copyright notice,
-    this list of conditions and the following disclaimer.
- 2. Redistributions in binary form must reproduce the above copyright notice,
-    this list of conditions and the following disclaimer in the documentation
-    and/or other materials provided with the distribution.
- 3. Neither the name of the copyright holder nor the names of its
-    contributors may be used to endorse or promote products derived from this
-    software without specific prior written permission.
-
- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- POSSIBILITY OF SUCH DAMAGE.
-*/
 #pragma once
 #include <condition_variable>
 #include <pcl/filters/voxel_grid.h>
@@ -52,6 +15,9 @@ different license.
 #include "preprocess.h"
 #include "ikd-Tree/ikd_Tree.h"
 #include "voxel_loc.hpp"
+#include <glog/logging.h>
+#include <ImMesh/cloud_voxel.h>
+#include "pointcloud_rgbd.hpp"
 
 #define INIT_TIME ( 0.0 )
 #define MAXN ( 360000 )
@@ -60,7 +26,32 @@ different license.
 
 using KDtree_pt = ikdTree_PointType;
 using KDtree_pt_vector = KD_TREE< KDtree_pt >::PointVector;
+extern string config_file;
 
+////////////////////////////////// 补充信息 //////////////////////////////////
+/// @bug 这里之前碰到了一个问题 定义的类成员变量 m_img 一开始取名是img与类的初始化函数中的形参img重名,导致一直不能正常输入图像数据
+struct Point_clouds_color_data_package
+{
+    pcl::PointCloud< pcl::PointXYZI >::Ptr m_frame_pts;
+    cv::Mat                                m_img;
+    Eigen::Quaterniond                     m_pose_q;
+    Eigen::Vector3d                        m_pose_t;
+    int                                    m_frame_idx;
+    Point_clouds_color_data_package( pcl::PointCloud< pcl::PointXYZI >::Ptr frame_pts, cv::Mat img, Eigen::Quaterniond pose_q, Eigen::Vector3d pose_t, int frame_idx )
+    {
+        m_frame_pts = frame_pts;
+        m_img = img;
+        m_pose_q = pose_q;
+        m_pose_t = pose_t;
+        m_frame_idx = frame_idx;
+    }
+};
+extern std::mutex                                            g_mutex_all_data_package_lock;
+extern std::list< Point_clouds_color_data_package >          g_rec_color_data_package_list;
+extern Global_map       g_map_rgb_pts_mesh;
+//extern std::thread *g_color_point_thr;
+extern std::unique_ptr<std::thread> g_color_point_thr;
+/////////////////////////////////////////////////////////////////////////////
 
 #define time_debug
 #define HASH_P 116101
@@ -129,6 +120,7 @@ void down_sampling_voxel( pcl::PointCloud< pcl::PointXYZI > &pl_feat, double vox
 void calcBodyVar( Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &var );
 
 void reconstruct_mesh_from_pointcloud( pcl::PointCloud< pcl::PointXYZI >::Ptr frame_pts, double minimum_pts_distance = 0.01 );
+
 class Voxel_mapping
 {
   public:
@@ -141,7 +133,7 @@ class Voxel_mapping
     // mutex mtx_buffer_pointcloud;
 
     string m_root_dir = ROOT_DIR;
-    string m_map_file_path, m_lid_topic, m_imu_topic, m_hilti_seq_name, m_img_topic, m_config_file;
+    string m_map_file_path, m_lid_topic = "/livox/lidar", m_imu_topic = "/livox/imu", m_hilti_seq_name = "01", m_config_file;
     M3D    Eye3d = M3D::Identity();
     M3F    Eye3f = M3F::Identity();
     V3D    Zero3d = V3D::Zero();
@@ -150,17 +142,17 @@ class Voxel_mapping
     M3D    m_extR = Eye3d;
     M3D    _gravity_correct_rotM = M3D::Identity();
 
-    int    NUM_MAX_ITERATIONS = 0;
-    int    MIN_IMG_COUNT = 0;
+    int    NUM_MAX_ITERATIONS = 4;
+    int    MIN_IMG_COUNT = 1000;
     double HALF_FOV_COS = 0, FOV_DEG = 0;
     bool   USE_NED = true;
     int    m_iterCount = 0, m_feats_down_size = 0, m_laserCloudValidNum = 0, m_effct_feat_num = 0, m_time_log_counter = 0, m_publish_count = 0;
 
     double m_res_mean_last = 0.05, m_last_lidar_processed_time = -1.0;
-    double m_gyr_cov = 0, m_acc_cov = 0;
-    double m_last_timestamp_lidar = -1.0, m_last_timestamp_imu = -1.0, m_last_timestamp_img = -1.0;
-    double m_filter_size_corner_min = 0, m_filter_size_surf_min = 0, m_filter_size_map_min = 0, m_fov_deg = 0;
-    double m_cube_len = 0, m_total_distance = 0, m_lidar_end_time = 0, m_first_lidar_time = 0.0;
+    double m_gyr_cov = 1.0, m_acc_cov = 1.0;
+    double m_last_timestamp_lidar = -1.0, m_last_timestamp_imu = -1.0;
+    double m_filter_size_corner_min = 0.5, m_filter_size_surf_min = 0.5, m_filter_size_map_min = 0.5, m_fov_deg = 180;
+    double m_cube_len = 200, m_total_distance = 0, m_lidar_end_time = 0, m_first_lidar_time = 0.0;
     double m_first_img_time = -1.0;
     double m_kdtree_incremental_time = 0, m_kdtree_search_time = 0, m_kdtree_delete_time = 0.0;
     int    m_kdtree_search_counter = 0, m_kdtree_size_st = 0, m_kdtree_size_end = 0, m_add_point_size = 0, m_kdtree_delete_counter = 0;
@@ -173,33 +165,33 @@ class Voxel_mapping
 
     /*** For voxel map ***/
 
-    double m_max_voxel_size, m_min_eigen_value = 0.003, m_match_s = 0.90, m_sigma_num = 2.0, m_match_eigen_value = 0.0025;
+    double m_max_voxel_size = 1.0, m_min_eigen_value = 0.003, m_match_s = 0.90, m_sigma_num = 2.0, m_match_eigen_value = 0.0025;
     double m_beam_err = 0.03, m_dept_err = 0.05;
     int    m_pub_map = 0, m_voxel_layer = 1;
     int    m_last_match_num = 0;
-    bool   m_init_map = false, m_use_new_map = true, m_is_pub_plane_map = false, m_pcd_save_en = false, m_img_save_en = false,
+    bool   m_init_map = false, m_use_new_map = false, m_is_pub_plane_map = false, m_pcd_save_en = false, m_img_save_en = false,
          m_effect_point_pub = false, m_hilti_en = false;
     int         m_min_points_size = 30, m_pcd_save_type = 0, m_pcd_save_interval = -1, m_img_save_interval = 1, m_pcd_index = 0, m_pub_point_skip = 1;
     std::time_t m_startTime, m_endTime;
-    std::unordered_map< VOXEL_LOC, OctoTree * > m_feat_map;
+    std::unordered_map< VOXEL_LOC, OctoTree * > m_feat_map;         // 体素对应的位置 + 该体素中的八叉树
     V3D                                         m_layer_size = V3D( 20, 10, 10 );
     std::vector< M3D >                          m_cross_mat_list;
     std::vector< M3D >                          m_body_cov_list;
 
     /*********************/
-    int                m_max_points_size;
-    int                m_max_layer;
+    int                m_max_points_size = 100;
+    int                m_max_layer = 2;
     std::vector< int > m_layer_init_size;
 
-    bool   m_lidar_pushed, m_imu_en, m_flg_reset, m_flg_exit = false;
+    bool   m_lidar_pushed, m_imu_en = false, m_flg_reset, m_flg_exit = false;
     int    m_dense_map_en = 1;
     int    m_img_en = 1, m_imu_int_frame = 3;
-    int    m_lidar_en = 1;
+    int    m_lidar_en = 1;              // 是否启动激光雷达
     int    m_GUI_font_size = 14;
     int    m_debug = 0;
     bool   m_is_first_frame = false;
-    int    m_grid_size, m_patch_size;
-    double m_outlier_threshold;
+    int    m_grid_size = 40 , m_patch_size = 4;
+    double m_outlier_threshold = 100;
 
     vector< BoxPointType > m_cub_need_rm;
     vector< BoxPointType > m_cub_need_add;
@@ -207,14 +199,12 @@ class Voxel_mapping
     deque< PointCloudXYZI::Ptr >        m_lidar_buffer;
     deque< double >                     m_time_buffer;
     deque< sensor_msgs::Imu::ConstPtr > m_imu_buffer;
-    deque< cv::Mat >                    m_img_buffer;
-    deque< double >                     m_img_time_buffer;
     vector< bool >                      m_point_selected_surf;
     vector< vector< int > >             m_pointSearchInd_surf;
     vector< PointVector >               m_Nearest_Points;
     vector< double >                    m_res_last;
     double                              m_total_residual;
-    double                              LASER_POINT_COV, IMG_POINT_COV, cam_fx, cam_fy, cam_cx, cam_cy;
+    double                              LASER_POINT_COV = 0.001, IMG_POINT_COV = 10, cam_fx, cam_fy, cam_cx, cam_cy;
     bool                                m_flg_EKF_inited, m_flg_EKF_converged, m_EKF_stop_flg = 0;
 
     // surf feature in map
@@ -286,6 +276,36 @@ class Voxel_mapping
     int         m_meshing_number_of_pts_append_to_map = 5000;
     std::string m_pointcloud_file_name = std::string( " " );
     // PointCloudXYZRGB::Ptr pcl_wait_pub_RGB(new PointCloudXYZRGB(500000, 1));
+
+    ////////////////////////////////////// 新增数据 //////////////////////////////////////
+    string m_img_topic;
+    // 去除畸变
+    cv::Mat m_ud_map1, m_ud_map2;
+    std::mutex g_mutex_render;
+    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_intrinsic;
+    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs;
+    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_ext_R;    // 相机到lidar转换
+    Eigen::Matrix<double, 3, 1> m_camera_ext_t;                     // 相机到lidar平移
+    cv::Mat intrinsic, dist_coeffs;
+
+    double m_last_timestamp_img = -1.0;
+    double m_camera_start_ros_tim = -3e8;
+
+    Eigen::Matrix3d g_cam_k;
+    deque< cv::Mat > m_img_buffer;
+    deque< double > m_img_time_buffer;
+    deque< ImMesh::cloud_voxelPtr > cloud_Buffer;
+
+    cv::Mat m_img;
+    cv::Mat m_img_gray;
+
+    eigen_q m_pose_w2c_q = eigen_q::Identity();
+    vec_3 m_pose_w2c_t = vec_3(0, 0, 0);
+    eigen_q m_pose_c2w_q = eigen_q::Identity();
+    vec_3 m_pose_c2w_t = vec_3(0, 0, 0);
+    vec_3 m_image_norm = vec_3(1, 0, 0);
+
+    ////////////////////////////////////////////////////////////////////////////////////
 
     Voxel_mapping()
     {
@@ -412,4 +432,17 @@ class Voxel_mapping
     void lio_state_estimation( StatesGroup &state_propagat );
     void init_ros_node();
     int  service_LiDAR_update();
+
+
+    ////////////////////////////////////////////// 新使用函数 //////////////////////////////////////////////
+    void readParameters(const std::string& config_file);
+    void laserCloudVoxelHandler(const ImMesh::cloud_voxelConstPtr &msgIn);
+    int service_lvisam_odometry();
+    void map_incremental();
+
+    void process_image(cv::Mat &temp_img, double msg_time);
+    void image_cbk(const sensor_msgs::CompressedImageConstPtr &msg);    // 这里获取到的是压缩之后的图像
+    void image_equalize(cv::Mat &img, int amp);
+    void start_point_colored_thread();
+    //////////////////////////////////////////////////////////////////////////////////////////////////////
 };

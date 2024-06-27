@@ -46,6 +46,7 @@ Dr. Fu Zhang < fuzhang@hku.hk >.
  POSSIBILITY OF SUCH DAMAGE.
 */
 #pragma once
+#include <ros/ros.h>
 #include <atomic>
 #include <unordered_set>
 #include "tools_logger.hpp"
@@ -231,6 +232,7 @@ std::vector<RGB_pt_ptr> retrieve_pts_in_voxels(std::unordered_set< std::shared_p
 using Voxel_set_iterator = std::unordered_set< std::shared_ptr< RGB_Voxel > >::iterator;
 using KDtree_pt = ikdTree_PointType;
 using KDtree_pt_vector =  KD_TREE<KDtree_pt>::PointVector;
+
 struct Global_map
 {
     int                       m_map_major_version = R3LIVE_MAP_MAJOR_VERSION;
@@ -288,6 +290,26 @@ struct Global_map
     void render_pts_in_voxels( std::shared_ptr< Image_frame > &img_ptr, std::vector< std::shared_ptr< RGB_pts > > &voxels_for_render,
                                double obs_time = 0 );
 
+    ///////////////////////////////////////////////////////////////// 补充一些自定义的变量以及参数 /////////////////////////////////////////////////////////////////
+    /* Global_map 设置一些基本参数 | R3live中关于相机内外参的读取信息都是先保存在r3live这个类中，再转换给Image_frame中进行数据处理 */
+//    std::shared_ptr< ros::NodeHandle > m_ros_node_ptr = nullptr;
+//    std::deque<std::shared_ptr<Image_frame>> m_queue_image_with_pose;
+//
+//    cv::Mat m_ud_map1, m_ud_map2;
+//    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_intrinsic;
+//    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs;
+//    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_ext_R;
+//    Eigen::Matrix<double, 3, 1> m_camera_ext_t;
+//    cv::Mat intrinsic, dist_coeffs;
+//
+//    std::mutex g_mutex_render;
+//    double m_camera_start_ros_tim = -3e8;
+//
+//    void init_ros_node();
+//    void read_ros_parameters(ros::NodeHandle &nh);
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   private:
     friend class boost::serialization::access;
     template < typename Archive >
@@ -299,6 +321,28 @@ struct Global_map
 
 void render_pts_in_voxels_mp( std::shared_ptr< Image_frame > &img_ptr, std::unordered_set< RGB_voxel_ptr > *voxels_for_render,
                               const double &obs_time = 0 );
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 template < typename Archive >
 inline void save( Archive &ar, const Global_map &global_map, const unsigned int /*version*/ )
@@ -323,6 +367,13 @@ inline void save( Archive &ar, const Global_map &global_map, const unsigned int 
     }
     cout << endl;
 }
+
+
+
+
+
+
+
 
 template < typename Archive >
 inline void load( Archive &ar, Global_map &global_map, const unsigned int /*version*/ )

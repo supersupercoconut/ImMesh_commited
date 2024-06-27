@@ -46,7 +46,7 @@ Dr. Fu Zhang < fuzhang@hku.hk >.
  POSSIBILITY OF SUCH DAMAGE.
 */
 #include "image_frame.hpp"
-
+#include <glog/logging.h>
 Image_frame::Image_frame()
 {
     m_gama_para( 0 ) = 1.0;
@@ -150,15 +150,18 @@ bool Image_frame::project_3d_to_2d(const pcl::PointXYZI & in_pt, Eigen::Matrix3d
         return false;
     }
 
+    // 进行投影的话还是得这么从world系中的点不断地投影到camera系中
     vec_3 pt_w(in_pt.x, in_pt.y, in_pt.z), pt_cam;
-    // pt_cam = (m_pose_w2c_q.inverse() * pt_w - m_pose_w2c_q.inverse()*m_pose_w2c_t);
+//     pt_cam = (m_pose_w2c_q.inverse() * pt_w - m_pose_w2c_q.inverse()*m_pose_w2c_t);
     pt_cam = (m_pose_c2w_q * pt_w + m_pose_c2w_t);
     if (pt_cam(2) < 0.001)
     {
         return false;
     }
+
     u = (pt_cam(0) * fx / pt_cam(2) + cx) * scale;
     v = (pt_cam(1) * fy / pt_cam(2) + cy) * scale;
+
     return true;
 }
 

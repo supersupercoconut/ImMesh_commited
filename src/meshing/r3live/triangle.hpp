@@ -6,6 +6,8 @@
 // class RGB_pts;
 // class RGB_Voxel;
 class Global_map;
+
+// 三角形mesh面片的基本结构
 class Triangle
 {
   public:
@@ -37,6 +39,7 @@ using Triangle_ptr = std::shared_ptr< Triangle >;
 // using Triangle_set = std::unordered_set<Triangle_ptr>;
 using Triangle_set = std::set< Triangle_ptr >;
 
+// 需要被同步更新的三角部分
 struct Sync_triangle_set
 {
     Triangle_set m_triangle_set;
@@ -118,7 +121,7 @@ class Triangle_manager
     Global_map*                             m_pointcloud_map = nullptr;
     Hash_map_3d< int, Triangle_ptr >        m_triangle_hash;
     double                                  m_region_size = 10.0;
-    std::vector< Sync_triangle_set* >            m_triangle_set_vector;
+    std::vector< Sync_triangle_set* >            m_triangle_set_vector;     // 对 三角部分set的一个向量
     // Hash_map_3d< int, Triangle_set >        m_triangle_set_in_region;
     Hash_map_3d< int, Sync_triangle_set >        m_triangle_set_in_region;
 
@@ -226,12 +229,15 @@ class Triangle_manager
         // std::set< T >::iterator it;
         Triangle_set triangle_ptr_list;
         // m_mutex_triangle_hash.lock();
+
+        // typename用于提示这是一个模板相对应的迭代器
         for ( typename std::set< T >::iterator it = set_index.begin(); it != set_index.end(); it++ )
         {
             if ( m_map_pt_triangle.find( *it ) != m_map_pt_triangle.end() )
             {
                 for ( Triangle_set::iterator tri_it = m_map_pt_triangle[ *it ].begin(); tri_it != m_map_pt_triangle[ *it ].end(); tri_it++ )
                 {
+                    // 这里感觉是反向验证, 判断找到的点是不是都能找到
                     if ( ( set_index.find( ( *tri_it )->m_tri_pts_id[ 0 ] ) != set_index.end() ) &&
                          ( set_index.find( ( *tri_it )->m_tri_pts_id[ 1 ] ) != set_index.end() ) &&
                          ( set_index.find( ( *tri_it )->m_tri_pts_id[ 2 ] ) != set_index.end() ) )
@@ -393,6 +399,7 @@ class Triangle_manager
 
         return triangle_ptr;
     }
+
     std::set< int > get_conflict_triangle_pts()
     {
         std::set< int > conflict_triangle_pts;

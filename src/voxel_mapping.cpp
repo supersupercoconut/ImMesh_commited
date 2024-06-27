@@ -1,48 +1,18 @@
-/* 
-This code is the implementation of our paper "ImMesh: An Immediate LiDAR Localization and Meshing Framework".
-
-The source code of this package is released under GPLv2 license. We only allow it free for personal and academic usage. 
-
-If you use any code of this repo in your academic research, please cite at least one of our papers:
-[1] Lin, Jiarong, et al. "Immesh: An immediate lidar localization and meshing framework." IEEE Transactions on Robotics
-   (T-RO 2023)
-[2] Yuan, Chongjian, et al. "Efficient and probabilistic adaptive voxel mapping for accurate online lidar odometry."
-    IEEE Robotics and Automation Letters (RA-L 2022)
-[3] Lin, Jiarong, and Fu Zhang. "R3LIVE: A Robust, Real-time, RGB-colored, LiDAR-Inertial-Visual tightly-coupled
-    state Estimation and mapping package." IEEE International Conference on Robotics and Automation (ICRA 2022)
-
-For commercial use, please contact me <ziv.lin.ljr@gmail.com> and Dr. Fu Zhang <fuzhang@hku.hk> to negotiate a 
-different license.
-
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
-
- 1. Redistributions of source code must retain the above copyright notice,
-    this list of conditions and the following disclaimer.
- 2. Redistributions in binary form must reproduce the above copyright notice,
-    this list of conditions and the following disclaimer in the documentation
-    and/or other materials provided with the distribution.
- 3. Neither the name of the copyright holder nor the names of its
-    contributors may be used to endorse or promote products derived from this
-    software without specific prior written permission.
-
- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- POSSIBILITY OF SUCH DAMAGE.
-*/
 #include "voxel_mapping.hpp"
+#include "pointcloud_rgbd.hpp"
+
 double g_LiDAR_frame_start_time = 0;
 
 V3D Lidar_T_wrt_IMU = V3D::Zero();
 M3D Lidar_R_wrt_IMU = M3D::Identity();
+
+/////////////////////// 补充数据 //////////////////
+void point_cloud_colored();
+double g_data_id = 0;
+std::unique_ptr<std::thread> g_color_point_thr = nullptr;
+std::mutex                                            g_mutex_all_data_package_lock;
+std::list< Point_clouds_color_data_package >          g_rec_color_data_package_list;
+/////////////////////////////////////////////////
 
 const bool intensity_contrast( PointType &x, PointType &y ) { return ( x.intensity > y.intensity ); };
 
@@ -114,6 +84,7 @@ void buildVoxelMap( const std::vector< Point_with_var > &input_points, const flo
     uint plsize = input_points.size();
     for ( uint i = 0; i < plsize; i++ )
     {
+        /// @attention 这里出现了一个误区 | Cpp中除法截断都是整数除法(对于浮点数是没有这个截断的)
         const Point_with_var p_v = input_points[ i ];
         float                loc_xyz[ 3 ];
         for ( int j = 0; j < 3; j++ )
@@ -124,7 +95,9 @@ void buildVoxelMap( const std::vector< Point_with_var > &input_points, const flo
                 loc_xyz[ j ] -= 1.0;
             }
         }
+        // 位置 (浮点数转为整数 - 靠近0进行截取) | 这样即实现了实际位置与体素位置之间的转换
         VOXEL_LOC position( ( int64_t ) loc_xyz[ 0 ], ( int64_t ) loc_xyz[ 1 ], ( int64_t ) loc_xyz[ 2 ] );
+
         auto      iter = feat_map.find( position );
         if ( iter != feat_map.end() )
         {
@@ -133,9 +106,12 @@ void buildVoxelMap( const std::vector< Point_with_var > &input_points, const flo
         }
         else
         {
+            // 当前在的位置一定是第0层 | 这个layer_init_num在一开始过读参数的时候给定的值是[5,5,5,5,5] | max_points_size为100 | planer_threshold是为了判断这里要不要生成一个新的平面数据么
             OctoTree *octo_tree = new OctoTree( max_layer, 0, layer_init_num, max_points_size, planer_threshold );
             feat_map[ position ] = octo_tree;
             feat_map[ position ]->m_quater_length_ = voxel_size / 4;
+
+            // position.x | position.y | position.z 即对应体素信息的编号
             feat_map[ position ]->m_voxel_center_[ 0 ] = ( 0.5 + position.x ) * voxel_size;
             feat_map[ position ]->m_voxel_center_[ 1 ] = ( 0.5 + position.y ) * voxel_size;
             feat_map[ position ]->m_voxel_center_[ 2 ] = ( 0.5 + position.z ) * voxel_size;
@@ -144,6 +120,7 @@ void buildVoxelMap( const std::vector< Point_with_var > &input_points, const flo
             feat_map[ position ]->m_layer_init_num_ = layer_init_num;
         }
     }
+    // 对于所有的体素都生成八叉树进行管理(之前只管理一些基本信息 | 点的数量以及指向八叉树等等)
     for ( auto iter = feat_map.begin(); iter != feat_map.end(); ++iter )
     {
         iter->second->init_octo_tree();
@@ -892,7 +869,7 @@ void pubNormal( visualization_msgs::MarkerArray &normal_pub, const std::string n
                 const float alpha, const Eigen::Vector3d rgb )
 {
     visualization_msgs::Marker normal;
-    normal.header.frame_id = "camera_init";
+    normal.header.frame_id = "odom";
     normal.header.stamp = ros::Time();
     normal.ns = normal_ns;
     normal.id = normal_id;
@@ -920,7 +897,7 @@ void pubPlane( visualization_msgs::MarkerArray &plane_pub, const std::string pla
                const float radius, const float min_eigen_value, const float alpha, const Eigen::Vector3d rgb )
 {
     visualization_msgs::Marker plane;
-    plane.header.frame_id = "camera_init";
+    plane.header.frame_id = "odom";
     plane.header.stamp = ros::Time();
     plane.ns = plane_ns;
     plane.id = plane_id;
@@ -944,6 +921,8 @@ void pubPlane( visualization_msgs::MarkerArray &plane_pub, const std::string pla
     plane_pub.markers.push_back( plane ); // plane_pub.publish(plane);
 }
 
+
+/// @brief 使用八叉树表示地图 | 地图对应的结点不断地往下分(sub就对应的是下面的结点) | 如果这个结点自己就对应一个plane,那就不用遍历其对应的子结点
 void pubPlaneMap( const std::unordered_map< VOXEL_LOC, OctoTree * > &feat_map, const ros::Publisher &plane_map_pub, const V3D &position )
 {
     int       normal_id = 0;
@@ -1007,7 +986,7 @@ void pubPlaneMap( const std::unordered_map< VOXEL_LOC, OctoTree * > &feat_map, c
             }
             else
             {
-                std::cout << "delete plane" << std::endl;
+//                std::cout << "delete plane" << std::endl;
             }
             // pubNormal(plane_map_pub, "normal", iter->second->plane_ptr_->id,
             //           iter->second->plane_ptr_->p_center, alpha, normal_rgb);
@@ -1065,7 +1044,7 @@ void pubPlaneMap( const std::unordered_map< VOXEL_LOC, OctoTree * > &feat_map, c
                         }
                         else
                         {
-                            std::cout << "delete plane" << std::endl;
+//                            std::cout << "delete plane" << std::endl;
                         }
                         // pubNormal(plane_map_pub, "normal",
                         //           iter->second->leaves_[i]->plane_ptr_->id,
@@ -1151,11 +1130,12 @@ void pubPlaneMap( const std::unordered_map< VOXEL_LOC, OctoTree * > &feat_map, c
     }
 
     plane_map_pub.publish( voxel_plane );
+//    LOG(INFO) << "[service_LiDAR_update] Publish the new map and the total size is: "<<feat_map.size();
     // plane_map_pub.publish(voxel_norm);
     loop.sleep();
-    cout << "[Map Info] Plane counts:" << plane_count << " Sub Plane counts:" << sub_plane_count << " Sub Sub Plane counts:" << sub_sub_plane_count
-         << endl;
-    cout << "[Map Info] Update plane counts:" << update_count << "total size: " << feat_map.size() << endl;
+//    cout << "[Map Info] Plane counts:" << plane_count << " Sub Plane counts:" << sub_plane_count << " Sub Sub Plane counts:" << sub_sub_plane_count
+//         << endl;
+//    cout << "[Map Info] Update plane counts:" << update_count << "total size: " << feat_map.size() << endl;
 }
 
 // Similar with PCL voxelgrid filter
@@ -1291,6 +1271,7 @@ void Voxel_mapping::lio_state_estimation( StatesGroup &state_propagat )
     m_body_cov_list.clear();
     m_body_cov_list.reserve( m_feats_down_size );
 
+    // 判断是不是使用voxelmap作为可视化工具
     if ( m_use_new_map )
     {
         if ( m_feat_map.empty() )
@@ -1655,14 +1636,18 @@ void Voxel_mapping::init_ros_node()
 {
     m_ros_node_ptr = std::make_shared< ros::NodeHandle >();
     read_ros_parameters( *m_ros_node_ptr );
+//    readParameters(config_file);
+
 }
 
+/// @brief 两个主要线程其中之一 service_LiDAR_update 整体作用应该是实现lidar_odometry + 点云地图, 以及mesh的生成
 int Voxel_mapping::service_LiDAR_update()
 {
     cout << "debug:" << m_debug << " MIN_IMG_COUNT: " << MIN_IMG_COUNT << endl;
+    LOG(INFO) << "Starting service LiDAR update!";
+    // 清除指针指向的点云对象
     m_pcl_wait_pub->clear();
-    // if (m_lidar_en)
-    // {
+
     ros::Subscriber sub_pcl;
     if ( m_p_pre->lidar_type == AVIA )
     {
@@ -1672,8 +1657,10 @@ int Voxel_mapping::service_LiDAR_update()
     {
         sub_pcl = m_ros_node_ptr->subscribe( m_lid_topic, 200000, &Voxel_mapping::standard_pcl_cbk, this );
     }
-    // }
+
     ros::Subscriber sub_imu = m_ros_node_ptr->subscribe( m_imu_topic, 200000, &Voxel_mapping::imu_cbk, this );
+    ros::Subscriber sub_image = m_ros_node_ptr->subscribe( m_img_topic, 200000, &Voxel_mapping::image_cbk, this );      // 接受压缩图像数据
+
     // ros::Subscriber sub_img = m_ros_node_ptr->subscribe(m_img_topic, 200000, img_cbk);
     ros::Publisher pubLaserCloudFullRes = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_registered", 100 );
     ros::Publisher pubLaserCloudVoxel = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_voxel", 100 );
@@ -1691,13 +1678,15 @@ int Voxel_mapping::service_LiDAR_update()
     // #endif
 
     m_pub_path.header.stamp = ros::Time::now();
-    m_pub_path.header.frame_id = "camera_init";
+    m_pub_path.header.frame_id = "odom";
     FILE *fp_kitti;
     // string kitti_log_dir = "/home/zivlin/temp/FAST-LIO-Voxelmap//Log/"
     //                        "kitti_log_voxelmap.txt";
     string kitti_log_dir = std::string( ROOT_DIR ).append( "/Log/kitti_log_voxelmap.txt" );
     fp_kitti = fopen( kitti_log_dir.c_str(), "w" );
+
 /*** variables definition ***/
+// 没有对USE_IKFOM进行宏定义 - 这里的定义是设置了一些必要的状态变量
 #ifndef USE_IKFOM
     VD( DIM_STATE ) solution;
     MD( DIM_STATE, DIM_STATE ) G, H_T_H, I_STATE;
@@ -1715,6 +1704,7 @@ int Voxel_mapping::service_LiDAR_update()
     m_downSizeFilterSurf.setLeafSize( m_filter_size_surf_min, m_filter_size_surf_min, m_filter_size_surf_min );
 // downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min,
 // filter_size_map_min);
+
 #ifdef USE_ikdforest
     ikdforest.Set_balance_criterion_param( 0.6 );
     ikdforest.Set_delete_criterion_param( 0.5 );
@@ -1735,6 +1725,7 @@ int Voxel_mapping::service_LiDAR_update()
     p_imu->set_acc_cov_scale( V3D( m_acc_cov, m_acc_cov, m_acc_cov ) );
     p_imu->set_gyr_bias_cov( V3D( 0.0001, 0.0001, 0.0001 ) );
     p_imu->set_acc_bias_cov( V3D( 0.0001, 0.0001, 0.0001 ) );
+    // 给imu设置一个用于初始化的imu数据量么
     p_imu->set_imu_init_frame_num( m_imu_int_frame );
 
     if ( !m_imu_en )
@@ -1772,17 +1763,37 @@ int Voxel_mapping::service_LiDAR_update()
     //------------------------------------------------------------------------------------------------------
 
     // signal( SIGINT, SigHandle );
-    ros::Rate rate( 5000 );
+    ros::Rate rate( 50000 );
     bool      status = ros::ok();
+
+    /// @bug 这个部分不能卸载while()循环中,一个线程不能在while()里面被频繁地使用以及销毁 | g_color_point_thr作为全局变量控制整个线程
+    if( g_color_point_thr == nullptr )
+    {
+//        g_color_point_thr = new std::thread( point_cloud_colored ); // 启动点云上色线程
+        g_color_point_thr = std::make_unique<std::thread>(point_cloud_colored);     // unique_ptr 对应的 thread , 不需要delete
+    }
+
+
+    // 整个lidar数据处理的核心
     while ( ( status = ros::ok() ) )
     {
         if ( m_flg_exit )
             break;
+        // 注意一下这里使用的ros::spinOnce() 只有到这里的时候才会处理系统中的回调函数 | 应该是ros收到的数据被保存到queue_size里面，只有到spinOnce()的时候会才被继续处理
         ros::spinOnce();
+        /// @bug 这里syn_packages( m_Lidar_Measures )可能会在 回调函数没有执行的时候进入一种死循环中，如果在这里调用其数据就会报错(即最常见的段错误)
+        // m_Lidar_Measures中虽然有一个measurement的deque，imu与图像数据被累积起来
         if ( !sync_packages( m_Lidar_Measures ) )
         {
-            status = ros::ok();
-            // cv::waitKey(1);
+               status = ros::ok();
+//            LOG(INFO) << "m_Lidar_Measures" << m_Lidar_Measures.measures.size();
+//            if( !m_Lidar_Measures.measures.empty() )
+//            {
+//                LOG(INFO) << "m_Lidar_Measures.measures.back().img " << m_Lidar_Measures.measures.back().img.size;
+//                cv::imshow("cvfds", m_Lidar_Measures.measures.back().img );
+//                cv::waitKey(0);
+//            }
+
             rate.sleep();
             continue;
         }
@@ -1803,9 +1814,7 @@ int Voxel_mapping::service_LiDAR_update()
             m_is_first_frame = true;
             cout << "FIRST LIDAR FRAME!" << endl;
         }
-        // std::cout << "ScanIdx:" << frame_num << std::endl;
-        // double t0,t1,t2,t3,t4,t5,match_start, match_time, solve_start,
-        // solve_time, svd_time;
+
         double t0, t1, t2, t3, t4, t5, match_start, solve_start, svd_time;
 
         m_match_time = m_kdtree_search_time = m_kdtree_search_counter = m_solve_time = m_solve_const_H_time = svd_time = 0;
@@ -1817,6 +1826,7 @@ int Voxel_mapping::service_LiDAR_update()
         state_point = kf.get_x();
         pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
 #else
+        // 送入的state还不清楚 | 但是m_Lidar_Measures就是需要处理的lidar+imu数据 | m_feats_undistort 为需要去畸变的数据
         p_imu->Process2( m_Lidar_Measures, state, m_feats_undistort );
 
         // ANCHOR: Remove point that nearing 10 meter
@@ -1840,7 +1850,9 @@ int Voxel_mapping::service_LiDAR_update()
 
         state_propagat = state;
 #endif
+
         // if(p_imu)
+        // 继续处理lidar数据 可能会更精确 | 但只会对kitti数据集中的雷达数据进行处理
         if ( m_p_pre->calib_laser )
         {
             for ( size_t i = 0; i < m_feats_undistort->size(); i++ )
@@ -1858,6 +1870,7 @@ int Voxel_mapping::service_LiDAR_update()
             }
         }
 
+        // 这里只有数据的写入 | 转换欧拉角(不知道为什么转换)
         if ( m_lidar_en )
         {
             m_euler_cur = RotMtoEuler( state.rot_end );
@@ -1873,6 +1886,7 @@ int Voxel_mapping::service_LiDAR_update()
 #endif
         }
 
+
         if ( m_feats_undistort->empty() || ( m_feats_undistort == nullptr ) )
         {
             cout << " No point!!!" << endl;
@@ -1881,12 +1895,15 @@ int Voxel_mapping::service_LiDAR_update()
 
         m_flg_EKF_inited = ( m_Lidar_Measures.lidar_beg_time - m_first_lidar_time ) < INIT_TIME ? false : true;
 
+        //  将局部点云保留在lidar左右 | 估计是维护了一个local的点云地图 —— 但是会将点转移到world系统
         if ( !m_use_new_map )
             laser_map_fov_segment();
 
+
         /*** downsample the feature points in a scan ***/
+        // m_downSizeFilterSurf对应的类型为pcl::VoxelGrid<pcl::PointXYZINormal> | 使用的filter也不过时将一个voxel中的点云用一个点来表示
         m_downSizeFilterSurf.setInputCloud( m_feats_undistort );
-        m_downSizeFilterSurf.filter( *m_feats_down_body );
+        m_downSizeFilterSurf.filter( *m_feats_down_body );   // m_feats_down_body 滤波之后的点云
         // std::cout << "feats size" << m_feats_undistort->size() << ", down size: " << m_feats_down_body->size() << std::endl;
         m_feats_down_size = m_feats_down_body->points.size();
 
@@ -1895,14 +1912,19 @@ int Voxel_mapping::service_LiDAR_update()
         {
             if ( !m_init_map )
             {
+                // 进行voxelmap的建立 —— 这里没有使用将采样的点云数据 使用的是去畸变数据
                 m_init_map = voxel_map_init();
+                LOG(INFO) << "Build the voxel map";
                 if ( m_is_pub_plane_map )
                     pubPlaneMap( m_feat_map, voxel_pub, state.pos_end );
 
                 frame_num++;
                 continue;
-            };
+            }
         }
+
+        // m_ikdtree的Root_Node根节点如果为空的话，就需要重建一个m_ikdtree来管理点云数据(Build需要的数据是点云数据) | m_feats_down_body上面的点云数据非常少
+        // 在不使用voxelmap的情况下使用ikd-tree来管理点云数据
         else if ( m_ikdtree.Root_Node == nullptr )
         {
             if ( m_feats_down_body->points.size() > 5 )
@@ -1913,6 +1935,7 @@ int Voxel_mapping::service_LiDAR_update()
             }
             continue;
         }
+
         int featsFromMapNum = m_ikdtree.size();
 
         // cout<<"[ LIO ]: Raw feature num: "<<feats_undistort->points.size()<<"
@@ -1953,7 +1976,7 @@ int Voxel_mapping::service_LiDAR_update()
         geoQuat.z = state_point.rot.coeffs()[ 2 ];
         geoQuat.w = state_point.rot.coeffs()[ 3 ];
 #else
-
+        // 核心的状态估计部分
         if ( m_lidar_en )
         {
             lio_state_estimation( state_propagat );
@@ -1967,18 +1990,37 @@ int Voxel_mapping::service_LiDAR_update()
         kitti_log( fp_kitti );
         /*** add the feature points to map kdtree ***/
         t3 = omp_get_wtime();
-        // cout << "Frame time consumption:" << (t3 - t0)*1000.0 << " ms" << endl;
+//         cout << "Frame time consumption:" << ((t3 - t0)/frame_num)*1000.0 << " ms" << endl;
 
+        /// @attention 这里对应的不仅仅是voxelmap的生成,还有mesh图的生成
         if ( m_lidar_en )
             map_incremental_grow();
 
         if ( m_is_pub_plane_map )
             pubPlaneMap( m_feat_map, voxel_pub, state.pos_end );
+
+        // 数据导入
+
+        pcl::PointCloud< pcl::PointXYZI >::Ptr world_lidar_full( new pcl::PointCloud< pcl::PointXYZI > );
+        // 转换到世界系
+        transformLidar( state.rot_end, state.pos_end, m_feats_undistort, world_lidar_full );
+
+        // 注意这里保留数据的部分 —— m_Lidar_Measures的measures是一个队列数据(其中直接保留数据) 由于这里使用了ros::spinOnce来控制,所以back()拿到的一定是最新的图像数据(一次同步只会更新一次)
+        g_mutex_all_data_package_lock.lock();
+        g_rec_color_data_package_list.emplace_back(world_lidar_full, m_Lidar_Measures.measures.back().img, Eigen::Quaterniond( state.rot_end ), state.pos_end, g_data_id);
+//        LOG(INFO) << "g_rec_color_data_package_list" << g_rec_color_data_package_list.back().m_img.cols;
+        g_mutex_all_data_package_lock.unlock();
+
+        g_data_id++;
+
+
+
         auto t_all_end = std::chrono::high_resolution_clock::now();
         auto all_time = std::chrono::duration_cast< std::chrono::duration< double > >( t_all_end - t_all_begin ).count() * 1000;
-        // std::cout << "[Time]: all time:" << all_time << " ms" << std::endl;
+//         std::cout << "[Time]: all time:" << all_time/frame_num << " ms" << std::endl;
         t5 = omp_get_wtime();
         m_kdtree_incremental_time = t5 - t3 + m_readd_time;
+
         /******* Publish points *******/
         PointCloudXYZI::Ptr laserCloudFullRes( m_dense_map_en ? m_feats_undistort : m_feats_down_body );
         int                 size = laserCloudFullRes->points.size();
@@ -1993,8 +2035,9 @@ int Voxel_mapping::service_LiDAR_update()
 
         if ( m_effect_point_pub )
             publish_effect_world( pubLaserCloudEffect );
+
         if ( m_use_new_map )
-            publish_voxel_point( pubLaserCloudVoxel, m_pcl_wait_pub );
+            publish_voxel_point( pubLaserCloudVoxel, m_pcl_wait_pub );  // 数据量很小
         // publish_map(pubLaserCloudMap);
         publish_path( pubPath );
         // #ifdef DEPLOY
@@ -2021,7 +2064,6 @@ int Voxel_mapping::service_LiDAR_update()
         m_s_plot3[ m_time_log_counter ] = m_kdtree_search_time / m_kdtree_search_counter;
         m_s_plot4[ m_time_log_counter ] = featsFromMapNum;
         m_s_plot5[ m_time_log_counter ] = t5 - t0;
-
         m_time_log_counter++;
         // printf( "[ mapping ]: time: fov_check %0.6f fov_check and readd: %0.6f "
         //         "match: %0.6f solve: %0.6f  ICP: %0.6f  map incre: %0.6f total: "
@@ -2045,6 +2087,434 @@ int Voxel_mapping::service_LiDAR_update()
         }
     }
 
+
+
     // #endif
     return 0;
 }
+
+
+// 接受lvisam的里程计数据 | 不知道为什么在实际使用gui界面经常会出现突然卡死的情况(但是又不知道是在哪里卡死的)
+int Voxel_mapping::service_lvisam_odometry()
+{
+    LOG(INFO) << "Starting the service_lvisam_odometry thread";
+    ros::Subscriber subCloudVoxel = m_ros_node_ptr->subscribe<ImMesh::cloud_voxel>( "/lvi_sam/lidar/voxel/cloud_voxel", 1000, &Voxel_mapping::laserCloudVoxelHandler, this);
+//     ros::Subscriber sub_imu = m_ros_node_ptr->subscribe( m_imu_topic, 200000, &Voxel_mapping::imu_cbk, this );
+//     ros::Subscriber sub_img = m_ros_node_ptr->subscribe(m_img_topic, 200000, img_cbk);
+    ros::Publisher pubLaserCloudFullRes = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_registered", 100 );
+    ros::Publisher pubLaserCloudVoxel = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_voxel", 100 );
+    ros::Publisher pubVisualCloud = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_visual_map", 100 );
+    ros::Publisher pubSubVisualCloud = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_visual_sub_map", 100 );
+    ros::Publisher pubLaserCloudEffect = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_effected", 100 );
+    ros::Publisher pubLaserCloudMap = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/Laser_map", 100 );
+    ros::Publisher pubOdomAftMapped = m_ros_node_ptr->advertise< nav_msgs::Odometry >( "/aft_mapped_to_init", 10 );
+    ros::Publisher pubPath = m_ros_node_ptr->advertise< nav_msgs::Path >( "/path", 10 );
+    ros::Publisher plane_pub = m_ros_node_ptr->advertise< visualization_msgs::Marker >( "/planner_normal", 1 );
+    ros::Publisher voxel_pub = m_ros_node_ptr->advertise< visualization_msgs::MarkerArray >( "/voxels", 1 );
+
+    m_pub_path.header.stamp = ros::Time::now();
+    m_pub_path.header.frame_id = "odom";
+
+    FILE *fp_kitti;
+    // string kitti_log_dir = "/home/zivlin/temp/FAST-LIO-Voxelmap//Log/"
+    //                        "kitti_log_voxelmap.txt";
+    string kitti_log_dir = std::string( ROOT_DIR ).append( "/Log/kitti_log_voxelmap.txt" );
+    fp_kitti = fopen( kitti_log_dir.c_str(), "w" );
+
+    int    effect_feat_num = 0, frame_num = 0;
+    double deltaT, deltaR, aver_time_consu = 0, aver_time_icp = 0, aver_time_match = 0, aver_time_solve = 0, aver_time_const_H_time = 0;
+    FOV_DEG = ( m_fov_deg + 10.0 ) > 179.9 ? 179.9 : ( m_fov_deg + 10.0 );
+    HALF_FOV_COS = cos( ( FOV_DEG ) *0.5 * PI_M / 180.0 );
+    m_downSizeFilterSurf.setLeafSize( m_filter_size_surf_min, m_filter_size_surf_min, m_filter_size_surf_min );
+    ros::Rate rate( 5000 );
+
+    FILE * fp;
+    string pos_log_dir = m_root_dir + "/Log/pos_log.txt";
+    fp = fopen( pos_log_dir.c_str(), "w" );
+    m_fout_img_pos.open( string( string( ROOT_DIR ) + "PCD/img_pos.json" ), ios::out );
+    m_fout_pcd_pos.open( string( string( ROOT_DIR ) + "PCD/scans_pos.json" ), ios::out );
+    m_fout_pre.open( DEBUG_FILE_DIR( "mat_pre.txt" ), ios::out );
+    m_fout_out.open( DEBUG_FILE_DIR( "mat_out.txt" ), ios::out );
+    m_fout_dbg.open( DEBUG_FILE_DIR( "dbg.txt" ), ios::out );
+
+    while(ros::ok())
+    {
+        ros::spinOnce();
+        int count = 0;
+        if(!cloud_Buffer.empty())
+        {
+            auto temp = cloud_Buffer.front();
+//            LOG(INFO) << "The "<< count++ << "point_cloud to be processed";
+            if(!m_is_first_frame)
+            {
+                m_first_lidar_time = temp->header.stamp.toSec();
+                m_is_first_frame = true;
+                LOG(INFO) << "FIRST LIDAR FRAME!";
+            }
+
+            double t0, t1, t2, t3, t4, t5, match_start, solve_start, svd_time;
+            m_match_time = m_kdtree_search_time = m_kdtree_search_counter = m_solve_time = m_solve_const_H_time = svd_time = 0;
+            t0 = omp_get_wtime();
+            g_LiDAR_frame_start_time = t0;
+            auto t_all_begin = std::chrono::high_resolution_clock::now();
+
+            // 读取数据
+            pcl::fromROSMsg(temp->cloud_deskewed, *m_feats_undistort);
+            if ( m_feats_undistort->empty() || ( m_feats_undistort == nullptr ) )
+            {
+                LOG(ERROR) << "No points";
+                continue;
+            }
+            // 获取位姿信息(其余部分不会使用协方差数据 所以只需要将对应的位姿信息输入到state中即可)
+            Eigen::Affine3f tmp = pcl::getTransformation(temp->x, temp->y, temp->z, temp->roll, temp->pitch, temp->yaw);
+            Eigen::Affine3d transCur = tmp.cast<double>();
+
+            state.pos_end = transCur.translation();
+            state.rot_end = transCur.rotation();
+
+            if(m_lidar_en)
+            {
+                m_euler_cur(0,0) = temp->roll;
+                m_euler_cur(0,1) = temp->pitch;
+                m_euler_cur(0,2) = temp->yaw;
+//                LOG(INFO) << m_euler_cur(0,0) << " " << m_euler_cur(0,1) << " " << m_euler_cur(0,2);
+            }
+
+            m_downSizeFilterSurf.setInputCloud( m_feats_undistort );
+            m_downSizeFilterSurf.filter( *m_feats_down_body );
+            m_feats_down_size = m_feats_down_body->points.size();
+//            LOG(INFO) << "Downsampled size: " << m_feats_down_size;
+
+            if ( m_use_new_map )
+            {
+                if ( !m_init_map )
+                {
+                    // 进行voxelmap的建立 —— 这里没有使用将采样的点云数据 使用的是去畸变数据
+                    m_init_map = voxel_map_init();
+                    if ( m_is_pub_plane_map )
+                        pubPlaneMap( m_feat_map, voxel_pub, state.pos_end );
+                    frame_num++;
+                    LOG(INFO)<<"Build the voxelMap";
+                    continue;
+                }
+            }
+
+           if ( m_lidar_en )
+               map_incremental();
+//               map_incremental_grow();
+            if ( m_is_pub_plane_map )
+                pubPlaneMap( m_feat_map, voxel_pub, state.pos_end );
+            t2 = omp_get_wtime();
+
+            frame_num++;
+            cloud_Buffer.pop_front();
+        }
+
+        rate.sleep();
+    }
+
+    return 0;
+}
+
+void Voxel_mapping::laserCloudVoxelHandler(const ImMesh::cloud_voxelConstPtr &msgIn)
+{
+    ImMesh::cloud_voxelPtr temp(new ImMesh::cloud_voxel());
+    temp->header = msgIn->header;
+    temp->cloud_deskewed = msgIn->cloud_deskewed;
+    temp->x = msgIn->x;
+    temp->y = msgIn->y;
+    temp->z = msgIn->z;
+    temp->roll = msgIn->roll;
+    temp->pitch = msgIn->pitch;
+    temp->yaw = msgIn->yaw;
+    temp->covariance = msgIn->covariance;
+    cloud_Buffer.push_back(temp);
+}
+
+
+/// @attention 这里是新开启了一个线程进行数据处理 | 并且在实际使用的时候关闭了GUI显示部分(为了关闭GUI 我注释掉了main函数中所有与GUI显示有关的部分，以及全部变量GL_camera g_gl_camera 还注释掉了一个完整的文件 mesh_rec_display.cpp)
+
+void point_cloud_colored()
+{
+    LOG(INFO) << "---- Staring the texture of point cloud ----" ;
+    // 读取数据(先保证一帧一帧没有问题)
+    while(ros::ok())
+    {
+        while(g_rec_color_data_package_list.empty())
+        {
+            std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+        }
+
+//        LOG(INFO) << "g_rec_color_data_package_list" << g_rec_color_data_package_list.size();
+        g_mutex_all_data_package_lock.lock();
+        auto data_temp = g_rec_color_data_package_list.front();
+        g_rec_color_data_package_list.pop_front();
+        g_mutex_all_data_package_lock.unlock();
+
+        // 获取点云数据以及图像数据
+        pcl::PointCloud< pcl::PointXYZI >::Ptr offline_pts = data_temp.m_frame_pts;
+//        LOG(INFO) << "offline_pts" << offline_pts->size();
+        // 图像已经去畸变
+        cv::Mat img = data_temp.m_img;
+//        LOG(INFO) << "image data" << data_temp.m_img.cols;
+        // 这里应该是imu系到world系的旋转平移 | 所以这里还需要一个内部的固定旋转关系来实现
+
+        Eigen::Matrix3d rot = data_temp.m_pose_q.toRotationMatrix();
+        Eigen::Vector3d pos = data_temp.m_pose_t;
+
+        Eigen::Matrix3d rot_i2l = Eigen::Matrix3d::Identity();
+        Eigen::Matrix3d rot_l2c = Eigen::Matrix3d::Identity();
+        rot_l2c << 0, 0, 1,
+            -1, 0, 0,
+            0, -1, 0;
+
+        Eigen::Vector3d pose_t;
+        pose_t << 0.30456, 0.00065, 0.65376 ;
+        Eigen::Vector3d t_i2l;
+        t_i2l.setZero();
+
+        Eigen::Vector3d t_w2c = rot * rot_i2l * pose_t + rot * t_i2l + pos;
+        Eigen::Matrix3d g_cam_K;
+        g_cam_K <<  617.971050917033,0.0,327.710279392468,
+                    0.0, 616.445131524790, 253.976983707814,
+                    0.0, 0.0, 1;
+
+
+        Eigen::Matrix3d R_w2c = rot*rot_i2l*rot_l2c;
+        std::shared_ptr< Image_frame > image_pose = std::make_shared< Image_frame >( g_cam_K );
+        image_pose->m_img = img;
+        image_pose->set_pose( eigen_q( R_w2c ), t_w2c );
+
+        g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points | 但这个也不是最后u_f v_f离奇结果的原因
+        // 因为这里只输入一帧数据，所以这里定义为1 | 随便定义点云跳转的数据为4
+//        g_map_rgb_pts_mesh.append_points_to_global_map( offline_pts, 1, nullptr, 1 );
+        g_map_rgb_pts_mesh.append_points_to_global_map(*offline_pts, 1, nullptr, 2);
+        std::vector< cv::Point2f >                pts_2d_vec;
+        std::vector< std::shared_ptr< RGB_pts > > rgb_pts_vec;
+        // 这个函数中直接得到: rgb_pts_vec(3D点) pts_2d_vec(2D点)
+        g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
+
+
+        for (const auto& point : pts_2d_vec) {
+            cv::circle(image_pose->m_img, point, 1, cv::Scalar(0, 255, 0), -1); // 绘制红色圆点
+        }
+
+        // 显示图像
+        cv::imshow("Image with Points", image_pose->m_img);
+        cv::waitKey(0);
+
+
+
+    }
+
+//    Eigen::Matrix3d g_cam_K;
+//    g_cam_K <<  617.971050917033,0.0,327.710279392468,
+//            0.0, 616.445131524790, 253.976983707814,
+//            0.0, 0.0, 1;
+////    g_cam_K << 863.4241, 0.0, 640.6808,
+////            0.0,  863.4171, 518.3392,
+////            0.0, 0.0, 1.0;
+//    Eigen::Matrix<double, 5, 1> g_cam_dist;
+//
+//    std::vector< double > camera_dist_data = {0.148000794688248,-0.217835187249065,0,0,0};
+////    std::vector< double > camera_dist_data = {-0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
+
+//    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_data.data() );
+//    g_cam_dist = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( m_camera_dist_coeffs.data() );
+//    cv::Mat intrinsic, dist_coeffs;
+//    cv::eigen2cv( g_cam_K, intrinsic );
+//    cv::eigen2cv( g_cam_dist, dist_coeffs );
+//    LOG(INFO) << "intrinsic " << intrinsic.size;
+//    LOG(INFO) << "dist_coeffs " << dist_coeffs.size;
+//    cv::Mat m_ud_map1, m_ud_map2;
+//
+//    // 生成畸变映射表
+//    initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size( temp_img.cols, temp_img.rows ),
+//                             CV_16SC2, m_ud_map1, m_ud_map2 );
+
+//    std::shared_ptr< Image_frame > image_pose = std::make_shared< Image_frame >( g_cam_K );
+//    cv::remap( temp_img, image_pose->m_img, m_ud_map1, m_ud_map2, cv::INTER_LINEAR );
+
+//    image_pose->m_timestamp = ros::Time::now().toSec();
+//    image_pose->init_cubic_interpolation();
+//    image_pose->image_equalize();
+//    LOG(INFO) << "m_img_gray" << image_pose->m_img_gray.size;
+
+//    mat_3_3 R_w2c;
+//    R_w2c <<  0, 0, 1,
+//            -1, 0, 0,
+//            0, -1, 0;
+//    vec_3 pose_t(0.30456, 0.00065, 0.65376);
+////    R_w2c << -0.00113207, -0.0158688, 0.999873,
+////            -0.9999999,  -0.000486594, -0.00113994,
+////            0.000504622,  -0.999874,  -0.0158682;
+////    vec_3 pose_t(0.0, 0.0, 0.0);
+//    image_pose->set_pose( eigen_q( R_w2c ), pose_t );
+
+//
+//    std::vector< cv::Point2f >                pts_2d_vec;
+//    std::vector< std::shared_ptr< RGB_pts > > rgb_pts_vec;
+//    // 这个函数中直接得到: rgb_pts_vec(3D点) pts_2d_vec(2D点)
+//    g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
+
+//
+//    for (const auto& point : pts_2d_vec) {
+//        cv::circle(image_pose->m_img, point, 1, cv::Scalar(0, 255, 0), -1); // 绘制红色圆点
+//    }
+//
+//    // 显示图像
+//    cv::imshow("Image with Points", image_pose->m_img);
+//    cv::waitKey(0);
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//void point_cloud_colored()
+//{
+//    LOG(INFO) << "---- Staring the texture of point cloud ----" ;
+//    // 读取相机参数(内外参)
+////    g_map_rgb_pts_mesh.init_ros_node();
+//
+//    // 获取点云数据
+//    pcl::PointCloud< pcl::PointXYZI > offline_pts;
+//    LOG(INFO) << "Input the point_cloud and camera data";
+//    fflush( stdout );       // C中的操作 | 刷新缓冲区，并且数据全部输出出来
+//    pcl::io::loadPCDFile( "/home/supercoconut/Myfile/datasets/m2DGR/output/pointcloud_20.pcd", offline_pts );
+//
+//
+//    g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points | 但这个也不是最后u_f v_f离奇结果的原因
+//    LOG(INFO) << "The size of pts = " << offline_pts.points.size();
+//    LOG(INFO) << "g_map_rgb_pts_mesh.m_minimum_pts_size = " << g_map_rgb_pts_mesh.m_minimum_pts_size;
+//
+//
+//    // 因为这里只输入一帧数据，所以这里定义为1 | 随便定义点云跳转的数据为4
+//    g_map_rgb_pts_mesh.append_points_to_global_map( offline_pts, 1, nullptr, 1 );
+//
+//
+//
+//
+//    // 获取图像数据与点云数据(在global_Map中保留一个Image_frame的变量或者buffer即可)
+//
+//    // 知道哪些voxel需要被处理(这个数据会跟临时定义的voxels_recent_visited变量进行数据互换，所以没有显示地让整个数据清空的操作)
+//    std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited = g_map_rgb_pts_mesh.m_voxels_recent_visited;
+//    LOG(INFO) << "The size of voxels_recent_visited is: "<< g_map_rgb_pts_mesh.m_voxels_recent_visited.size();
+//
+//    // 获取用于投影点
+//    std::vector<std::shared_ptr<RGB_pts>> pts_for_projection;
+//    for(auto i = voxels_recent_visited.begin(); i!= voxels_recent_visited.end(); i++)
+//    {
+//        if ( ( *i )->m_pts_in_grid.size() )
+//            pts_for_projection.push_back( (*i)->m_pts_in_grid.back() );
+//    }
+//
+//    /// @bug 这个点的数量好像与在加入线程中的数量不太一样(但至少是加入进来了)
+//    LOG(INFO) << "The total points in pts_for_projection : "<< pts_for_projection.size();
+//
+//    Hash_map_2d<int, int> mask_index;
+//    Hash_map_2d<int, float> mask_depth;
+//
+//    // 后面这部分的变量只是存储数据的部分
+//    std::map<int, cv::Point2f> map_idx_draw_center;
+//    std::map<int, cv::Point2f> map_idx_draw_center_raw_pose;
+//
+//    // 获取图像信息 | 需要设置 坐标系转换 + 内参信息 | 已知camera到lidar的旋转矩阵 (lidar系与world系同步)
+////    cv::Mat temp_img = cv::imread("/home/supercoconut/Myfile/datasets/R3LIVE/hku_park_01/output/image_2.png", cv::IMREAD_COLOR);
+//    cv::Mat temp_img = cv::imread("/home/supercoconut/Myfile/datasets/m2DGR/output/image_20.jpg", cv::IMREAD_COLOR);
+//    LOG(INFO) << " temp_img.cols: " << temp_img.cols << "temp_img.rows: " << temp_img.rows;
+//
+//    Eigen::Matrix3d g_cam_K;
+//    g_cam_K <<  617.971050917033,0.0,327.710279392468,
+//            0.0, 616.445131524790, 253.976983707814,
+//            0.0, 0.0, 1;
+////    g_cam_K << 863.4241, 0.0, 640.6808,
+////            0.0,  863.4171, 518.3392,
+////            0.0, 0.0, 1.0;
+//    Eigen::Matrix<double, 5, 1> g_cam_dist;
+//
+//    std::vector< double > camera_dist_data = {0.148000794688248,-0.217835187249065,0,0,0};
+////    std::vector< double > camera_dist_data = {-0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
+//    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_data.data() );
+//    g_cam_dist = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( m_camera_dist_coeffs.data() );
+//    cv::Mat intrinsic, dist_coeffs;
+//    cv::eigen2cv( g_cam_K, intrinsic );
+//    cv::eigen2cv( g_cam_dist, dist_coeffs );
+//    LOG(INFO) << "intrinsic " << intrinsic.size;
+//    LOG(INFO) << "dist_coeffs " << dist_coeffs.size;
+//    cv::Mat m_ud_map1, m_ud_map2;
+//
+//    // 生成畸变映射表
+//    initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size( temp_img.cols, temp_img.rows ),
+//                             CV_16SC2, m_ud_map1, m_ud_map2 );
+//
+//    std::shared_ptr< Image_frame > image_pose = std::make_shared< Image_frame >( g_cam_K );
+//    cv::remap( temp_img, image_pose->m_img, m_ud_map1, m_ud_map2, cv::INTER_LINEAR );
+//    LOG(INFO) << "image_pose->m_img.rows" << image_pose->m_img.rows;
+//
+//    image_pose->m_timestamp = ros::Time::now().toSec();
+//    image_pose->init_cubic_interpolation();
+//    image_pose->image_equalize();
+//    LOG(INFO) << "m_img_gray" << image_pose->m_img_gray.size;
+//
+//    mat_3_3 R_w2c;
+//    R_w2c <<  0, 0, 1,
+//            -1, 0, 0,
+//            0, -1, 0;
+//    vec_3 pose_t(0.30456, 0.00065, 0.65376);
+////    R_w2c << -0.00113207, -0.0158688, 0.999873,
+////            -0.9999999,  -0.000486594, -0.00113994,
+////            0.000504622,  -0.999874,  -0.0158682;
+////    vec_3 pose_t(0.0, 0.0, 0.0);
+//    image_pose->set_pose( eigen_q( R_w2c ), pose_t );
+//
+//
+//    std::vector< cv::Point2f >                pts_2d_vec;
+//    std::vector< std::shared_ptr< RGB_pts > > rgb_pts_vec;
+//    // 这个函数中直接得到: rgb_pts_vec(3D点) pts_2d_vec(2D点)
+//    g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
+//
+//
+//    for (const auto& point : pts_2d_vec) {
+//        cv::circle(image_pose->m_img, point, 1, cv::Scalar(0, 255, 0), -1); // 绘制红色圆点
+//    }
+//
+//    // 显示图像
+//    cv::imshow("Image with Points", image_pose->m_img);
+//    cv::waitKey(0);
+//
+//}

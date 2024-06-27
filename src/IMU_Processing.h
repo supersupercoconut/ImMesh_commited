@@ -114,7 +114,7 @@ class ImuProcess
   V3D cov_gyr_scale;
   V3D cov_bias_gyr;
   V3D cov_bias_acc;
-  double first_lidar_time;
+  double first_lidar_time;    // 这里竟然也会保留一个first_lidar_time
 
  private:
  #ifdef USE_IKFOM

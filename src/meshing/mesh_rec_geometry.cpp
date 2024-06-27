@@ -134,18 +134,32 @@ extern int                  g_current_frame;
 extern std::vector< vec_3 > dbg_line_vec;
 extern std::mutex           dbg_line_mutex;
 
+/// @brief
+/*
+ * (1) remove_triangles:当前所有的
+ * (2) add_triangles:新找到的三角
+ * (3) res_remove_triangles:需要被移除的三角
+ * (4) res_add_triangles:真正需要被添加的三角
+ * (5) exist_triangles:存在的三角
+ * */
+
 void triangle_compare( const Triangle_set &remove_triangles, const std::vector< long > &add_triangles, Triangle_set &res_remove_triangles,
                                  Triangle_set &res_add_triangles, Triangle_set *exist_triangles )
 {
+
     Hash_map_3d< long, std::pair< Triangle_ptr, bool > > all_remove_triangles_list;
+
     for ( const Triangle_ptr &tri_ptr : remove_triangles )
     {
+        // 设置为true,即代表需要被增加
         all_remove_triangles_list.insert( tri_ptr->m_tri_pts_id[ 0 ], tri_ptr->m_tri_pts_id[ 1 ], tri_ptr->m_tri_pts_id[ 2 ],
                                           std::make_pair( tri_ptr, true ) );
     }
     for ( int i = 0; i < add_triangles.size(); i += 3 )
     {
+        // 新三角
         Triangle                         tri( add_triangles[ i ], add_triangles[ i + 1 ], add_triangles[ i + 2 ] );
+
         std::pair< Triangle_ptr, bool > *temp_pair_ptr =
             all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
         if ( temp_pair_ptr != nullptr )
@@ -164,6 +178,7 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
 
     for ( auto &it : all_remove_triangles_list.m_map_3d_hash_map )
     {
+        // 这里就是上面bool进行赋值的true或者false
         if ( it.second.second )
         {
             res_remove_triangles.insert( it.second.first );
@@ -171,6 +186,9 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
     }
 }
 
+
+/// @brief 整个voxel中的点云以及voxel外围的一部分邻居点云 | 需要计算投影平面, 又生成convex_hull_index(凸包)以及inner_hull_index(内部点)进行处理
+    // 关于轴的计算分为长轴 | 中轴 | 短轴三个轴 —— 具体是根据哪一个轴上面的点云数据分布的广来区分的
 std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_vec, vec_3 &long_axis, vec_3 &mid_axis, vec_3 &short_axis,
                                                 std::set< long > &convex_hull_index, std::set< long > &inner_hull_index )
 {
@@ -190,9 +208,11 @@ std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_ve
         pc_mat.row( i ) = rgb_pt_vec[ i ]->get_pos();
     }
 
+    // 转换成eigen信息再进行转换
     vec_3           pc_center = pc_mat.colwise().mean().transpose();
     Eigen::MatrixXd pt_sub_center = pc_mat.rowwise() - pc_center.transpose();
 
+    // 长中短轴的定义为 : 点云协方差矩阵的三个特征值
     if ( short_axis.norm() == 0 )
     {
         Eigen::Matrix3d                                  cov = ( pt_sub_center.transpose() * pt_sub_center ) / double( pc_mat.rows() );
@@ -211,6 +231,7 @@ std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_ve
         }
         long_axis = short_axis.cross( mid_axis );
     }
+
     tim.tic();
     std::vector< std::pair< Common_tools::D2_Point, long > > points;
     points.resize( rgb_pt_vec.size() );
@@ -290,7 +311,6 @@ std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_ve
     sprintf( dbg_str, "Cost time=%.2f ms, pts=%d, tri=%d", tim.toc(), ( int ) tri_rgb_pt_indices.size(), ( int ) tri_rgb_pt_indices.size() / 3 );
     // g_debug_string = std::string( dbg_str );
     // cout << g_debug_string << endl;
-
     return tri_rgb_pt_indices;
 }
 
@@ -333,6 +353,9 @@ std::vector< RGB_pt_ptr > retrieve_neighbor_pts( const std::vector< RGB_pt_ptr >
 // ANCHOR - retrieve_neighbor_pts_kdtree
 float                     smooth_factor = 1.0;
 double                    g_kd_tree_accept_pt_dis  = 0.32;
+
+/// @brief 搜索在这个voxel中的所有特征点 | 通过距离进行判断，要么进入点序列，要么用于点云数据的平滑 | KDtree只会在Global map中进行保存,RGB_Voxel之间是没有数据交互
+
 std::vector< RGB_pt_ptr > retrieve_neighbor_pts_kdtree( const std::vector< RGB_pt_ptr > &rgb_pts_vec )
 {
     std::vector< RGB_pt_ptr > res_pt_vec;
@@ -346,7 +369,7 @@ std::vector< RGB_pt_ptr > retrieve_neighbor_pts_kdtree( const std::vector< RGB_p
         std::vector< int >   indices;
         std::vector< float > distances;
         vec_3                pt_vec = rgb_pts_vec[ i ]->get_pos();
-        KDtree_pt            kdtree_pt( pt_vec );
+        KDtree_pt            kdtree_pt( pt_vec );   // 在KDtree中表示该点
         g_map_rgb_pts_mesh.m_kdtree.Nearest_Search( kdtree_pt, 20, kdtree_pt_vector, pt_dis_vector );
         int   size = kdtree_pt_vector.size();
         vec_3 smooth_vec = vec_3( 0, 0, 0 );

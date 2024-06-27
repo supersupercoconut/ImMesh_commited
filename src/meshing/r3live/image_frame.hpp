@@ -168,10 +168,8 @@ const int MAX_DS_LAY = 7;
 //     return *this;
 // }
 
-
 struct Image_frame
 {
-    
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     using data_type = double;
     using PointType = pcl::PointXYZI;

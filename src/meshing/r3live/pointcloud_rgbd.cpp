@@ -48,6 +48,9 @@ Dr. Fu Zhang < fuzhang@hku.hk >.
 
 #include "pointcloud_rgbd.hpp"
 #include "../optical_flow/lkpyramid.hpp"
+#include <glog/logging.h>
+#include <opencv2/calib3d.hpp>
+
 extern Common_tools::Cost_time_logger              g_cost_time_logger;
 extern std::shared_ptr< Common_tools::ThreadPool > m_thread_pool_ptr;
 cv::RNG                                            g_rng = cv::RNG( 0 );
@@ -301,6 +304,7 @@ Global_map::Global_map( int if_start_service )
 }
 Global_map::~Global_map(){};
 
+// 在r3live中这里是启动的 即 Global_map 在初始化的时候可以赋值为1
 void Global_map::service_refresh_pts_for_projection()
 {
     eigen_q                        last_pose_q = eigen_q::Identity();
@@ -326,6 +330,7 @@ void Global_map::service_refresh_pts_for_projection()
         timer.tic( " " );
         std::shared_ptr< std::vector< std::shared_ptr< RGB_pts > > > pts_rgb_vec_for_projection =
             std::make_shared< std::vector< std::shared_ptr< RGB_pts > > >();
+
         if ( m_if_get_all_pts_in_boxes_using_mp )
         {
             std::vector< std::shared_ptr< RGB_pts > > pts_in_recent_hitted_boxes;
@@ -408,37 +413,45 @@ std::vector< RGB_pt_ptr > retrieve_pts_in_voxels( std::unordered_set< std::share
 
 std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited;
 
+// added_time 为新来点云的id编码
 template < typename T >
 int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double added_time, std::vector< std::shared_ptr< RGB_pts > >* pts_added_vec,
                                              int step, int disable_append )
 {
+
     m_in_appending_pts = 1;
     Common_tools::Timer tim;
     tim.tic();
     int acc = 0;
     int rej = 0;
+
+    // 无论需要添加点做什么,这里一定是空
     if ( pts_added_vec != nullptr )
     {
         pts_added_vec->clear();
     }
-
+// m_recent_visited_voxel_activated_time感觉恒为0 | 这里的time我感觉是次数的意思
     if ( m_recent_visited_voxel_activated_time == 0 )
     {
         voxels_recent_visited.clear();
     }
     else
     {
+        // m_mutex_m_box_recent_hitted这个锁就是为了m_voxels_recent_visited而设置出来的锁
         m_mutex_m_box_recent_hitted->lock();
+        // 交换值 ( 时间复杂度为O(1) ) -> 并不是元素之间转换,是这两个vector中指向数据部分的指针直接互换
         std::swap( voxels_recent_visited, m_voxels_recent_visited );
         m_mutex_m_box_recent_hitted->unlock();
+
         for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
         {
-
+            // 删除一些之前的数据(因为这里的m_recent_visited_voxel_activated_time=0,而且m_last_visited_time被赋值成为了added_time,所以感觉这里之前的数据都被清空了) | 所以应该是什么是最近访问做定义
             if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
             {
                 it = voxels_recent_visited.erase( it );
                 continue;
             }
+
             if ( ( *it )->m_pts_in_grid.size() )
             {
                 double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
@@ -448,29 +461,32 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
                 //     continue;
                 // }
             }
-
             it++;
         }
         // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
     }
+
     int number_of_voxels_before_add = voxels_recent_visited.size();
     int pt_size = pc_in.points.size();
     // step = 4;
 
     KDtree_pt_vector     pt_vec_vec;
     std::vector< float > dist_vec;
-
+    int count = 0;
     RGB_voxel_ptr* temp_box_ptr_ptr;
+
     for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
     {
         int  add = 1;
+        // m_minimum_pts_size对应的大小为0.05,即对应着grid中的大小划分为0.05(估计是滤波相关操作) | 相当于是把xyz转换是grid的编号
         int  grid_x = std::round( pc_in.points[ pt_idx ].x / m_minimum_pts_size );
         int  grid_y = std::round( pc_in.points[ pt_idx ].y / m_minimum_pts_size );
         int  grid_z = std::round( pc_in.points[ pt_idx ].z / m_minimum_pts_size );
+        // 将xyz转换成voxel对应的编号
         int  box_x = std::round( pc_in.points[ pt_idx ].x / m_voxel_resolution );
         int  box_y = std::round( pc_in.points[ pt_idx ].y / m_voxel_resolution );
         int  box_z = std::round( pc_in.points[ pt_idx ].z / m_voxel_resolution );
-        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );
+        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );  // 查找是否存在数据
         if ( pt_ptr != nullptr )
         {
             add = 0;
@@ -479,6 +495,11 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
                 pts_added_vec->push_back( *pt_ptr );
             }
         }
+        else
+            count++;
+
+
+        // 查找voxel现在有没有
         RGB_voxel_ptr box_ptr;
         temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
         if ( temp_box_ptr_ptr == nullptr )
@@ -491,6 +512,7 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
         {
             box_ptr = *temp_box_ptr_ptr;
         }
+        // 根据点的位置, 找到对应的voxel位置
         voxels_recent_visited.insert( box_ptr );
         box_ptr->m_last_visited_time = added_time;
         if ( add == 0 )
@@ -502,17 +524,19 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
         {
             continue;
         }
+
         acc++;
+        // 新建一个Kdtree中对应的点数据 | 总之就是进行了一个查找(让新点不要与之前的点在同一个grid中) | 但是与上面在hash表中查找的点是否存在最后生成的点的数量貌似有一点不太一样
         KDtree_pt kdtree_pt( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ), 0 );
         if ( m_kdtree.Root_Node != nullptr )
         {
+            // 寻找一个最近点，输出的点 + 到这个被查询点 kdtree_pt 的距离值也会被获取到
             m_kdtree.Nearest_Search( kdtree_pt, 1, pt_vec_vec, dist_vec );
             if ( pt_vec_vec.size() )
             {
+                // 把点放入kD_tree的时候也要考虑点与点之间的距离约束
                 if ( sqrt( dist_vec[ 0 ] ) < m_minimum_pts_size )
-                {
                     continue;
-                }
             }
         }
         std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
@@ -543,6 +567,14 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
             pts_added_vec->push_back( pt_rgb );
         }
     }
+
+    // 实际运行中 pts_added_vec的数据一直为nullptr
+    if(pts_added_vec != nullptr)
+        LOG(INFO) << "[service_reconstruct_mesh] New "<<pts_added_vec->size() <<" points are added in the global map!";
+    else
+        LOG(INFO) << "[service_reconstruct_mesh] New "<< count << " points are added in the global map and The pts_added_vec is empty!!";
+
+
     m_in_appending_pts = 0;
     m_mutex_m_box_recent_hitted->lock();
     std::swap( m_voxels_recent_visited, voxels_recent_visited );
@@ -550,6 +582,7 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
     m_mutex_m_box_recent_hitted->unlock();
     return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
 }
+
 
 void Global_map::render_pts_in_voxels( std::shared_ptr< Image_frame >& img_ptr, std::vector< std::shared_ptr< RGB_pts > >& pts_for_render,
                                        double obs_time )
@@ -796,6 +829,7 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
     m_mutex_m_box_recent_hitted->lock();
     std::unordered_set< std::shared_ptr< RGB_Voxel > > boxes_recent_hitted = m_voxels_recent_visited;
     m_mutex_m_box_recent_hitted->unlock();
+
     if ( ( !use_all_pts ) && boxes_recent_hitted.size() )
     {
         m_mutex_rgb_pts_in_recent_hitted_boxes->lock();
@@ -810,13 +844,13 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
                 // pts_for_projection.push_back( ( *it )->m_pts_in_grid[ ( *it )->m_pts_in_grid.size()-1 ] );
             }
         }
-
         m_mutex_rgb_pts_in_recent_hitted_boxes->unlock();
     }
     else
     {
         pts_for_projection = m_rgb_pts_vec;
     }
+
     int pts_size = pts_for_projection.size();
     for ( int pt_idx = 0; pt_idx < pts_size; pt_idx += skip_step )
     {
@@ -871,6 +905,8 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
             pc_2d_out_vec->push_back( map_idx_draw_center_raw_pose[ it->first ] );
         }
     }
+
+    LOG(INFO) << "[selection_points_for_projection]" << "add points: " << acc <<"replace points: " << blk_rej;
 }
 
 void Global_map::save_to_pcd( std::string dir_name, std::string _file_name, int save_pts_with_views )
@@ -956,3 +992,69 @@ vec_3 Global_map::smooth_pts( RGB_pt_ptr& rgb_pt, double smooth_factor, double k
     rgb_pt->set_smooth_pos(pt_vec_smoothed);
     return pt_vec_smoothed;
 }
+
+////////////////////////////////////////////// 按照R3live类补充的部分 /////////////////////////////////////////////////////////////////
+//void Global_map::init_ros_node() {
+//    m_ros_node_ptr = std::make_shared< ros::NodeHandle >();
+//    read_ros_parameters( *m_ros_node_ptr );
+//}
+//
+///*这里读取一些基本的参数即可 | 而且这里读取数据来源是ros的参数服务器(这里暂时不考虑) - 直接使用默认的参数设置 */
+//// 从ros中读取到的参数都是vector，所以这里还需要转换
+//void Global_map::read_ros_parameters(ros::NodeHandle &nh)
+//{
+//    LOG(INFO) << "Loading camera parameter";
+//    // 图像大小
+//    int width = 640;
+//    int height = 480;
+//    // 相机内参(后期可以更换成ros中读取参数)
+//    std::vector< double > camera_intrinsic_data, camera_dist_coeffs_data, camera_ext_R_data, camera_ext_t_data;
+//
+//    /* m2DGR数据集 */
+//    camera_intrinsic_data = { 617.971050917033,0.0,327.710279392468,
+//                              0.0, 616.445131524790, 253.976983707814,
+//                              0.0, 0.0, 1};
+//    camera_dist_coeffs_data = { 0.148000794688248, -0.217835187249065, 0.0, 0.0 ,0.0};
+//    // Lidar到camera的旋转+平移
+//    camera_ext_R_data ={0, 0, 1,
+//                        -1, 0, 0,
+//                        0, -1, 0};
+//
+//    camera_ext_t_data = {0.30456, 0.00065, 0.65376};
+//
+//    /*r3live数据集*/
+////    camera_intrinsic_data = { 863.4241, 0.0, 640.6808,
+////                              0.0,  863.4171, 518.3392,
+////                              0.0, 0.0, 1.0};
+////    camera_dist_coeffs_data = { -0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
+////    // Lidar到camera的旋转+平移
+////    camera_ext_R_data ={-0.00113207, -0.0158688, 0.999873,
+////                        -0.9999999,  -0.000486594, -0.00113994,
+////                        0.000504622,  -0.999874,  -0.0158682};
+////
+////    camera_ext_t_data = {0.0, 0.0, 0.0};
+//
+//    /*Global中的类成员读取参数 */
+//    m_camera_intrinsic = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_intrinsic_data.data() );
+//    m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_coeffs_data.data() );
+//    m_camera_ext_R = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_ext_R_data.data() );
+//    m_camera_ext_t = Eigen::Map< Eigen::Matrix< double, 3, 1 > >( camera_ext_t_data.data() );
+//
+//    cv::eigen2cv(m_camera_intrinsic, intrinsic);
+//    cv::eigen2cv(m_camera_dist_coeffs, dist_coeffs);
+//    /*设置去畸变参数等等*/
+//    initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size(width, height),
+//                                      CV_16SC2, m_ud_map1, m_ud_map2 );
+//
+//    cout << "[Ros_parameter]: Camera Intrinsic: " << endl;
+//    cout << m_camera_intrinsic << endl;
+//    cout << "[Ros_parameter]: Camera distcoeff: " << m_camera_dist_coeffs.transpose() << endl;
+//    cout << "[Ros_parameter]: Camera extrinsic R: " << endl;
+//    cout << m_camera_ext_R << endl;
+//    cout << "[Ros_parameter]: Camera extrinsic T: " << m_camera_ext_t.transpose() << endl;
+//
+//
+//    // ros参数服务器的时候获取数据的方法
+//    //m_ros_node_ptr->getParam( "r3live_vio/camera_intrinsic", camera_intrinsic_data );
+//    std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
+//}

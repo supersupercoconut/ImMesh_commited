@@ -85,7 +85,7 @@ GLFWwindow* GL_camera::init_openGL_and_ImGUI( const char* window_title, int full
 #else
     cout << "Load font from: " << std::string( FONT_DIR ).append( "/Roboto-Medium.ttf" ) << endl;
     cout << "Display width = " << vidmode->width << endl;
-    cout << "Font sclae = " << font_scale << endl;
+    cout << "Font scale = " << font_scale << endl;
     io.Fonts->AddFontFromFileTTF( std::string( FONT_DIR ).append( "/Roboto-Medium.ttf" ).c_str(), font_scale );
 #endif
 

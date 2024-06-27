@@ -9,7 +9,7 @@ debug : 0
 min_img_count : 150000
 grid_size : 40
 patch_size : 8
-img_enable : 0
+img_enable : 1
 lidar_enable : 1
 outlier_threshold : 78 # 78 100 156
 img_point_cov : 1000 #100
@@ -38,7 +38,7 @@ mapping:
 
 voxel:
     voxel_map_en: true
-    pub_plane_en: false
+    pub_plane_en: true
     dept_err: 0.04
     beam_err: 0.1
     min_eigen_value: 0.01
@@ -57,7 +57,7 @@ camera:
     Pcl: [0.051708, -0.004601, -0.023075]
     
 publish:
-    path_en:  false
+    path_en:  true
     scan_publish_en:  true       # false: close all the point cloud output
     dense_publish_en: false       # false: low down the points number in a global-frame point clouds scan.
     scan_bodyframe_pub_en: false  # true: output the point cloud scans in IMU-body-frame

@@ -486,7 +486,6 @@ void ImuProcess::Forward( const MeasureGroup &meas, StatesGroup &state_inout, do
 void ImuProcess::Forward_without_imu( LidarMeasureGroup &meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out )
 {
     const double &pcl_beg_time = meas.lidar_beg_time;
-
     /*** sort point clouds by offset time ***/
     pcl_out = *( meas.lidar );
     // sort(pcl_out->points.begin(), pcl_out->points.end(), time_list);
@@ -752,6 +751,8 @@ void ImuProcess::Process( LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
     // cout<<"[ IMU Process ]: Time: "<<t3 - t1<<endl;
 }
 
+/// @brief lidar数据运动补偿 | imu数据前向传播计算大致位姿再反向传播回去矫正
+
 void ImuProcess::UndistortPcl( LidarMeasureGroup &lidar_meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out )
 {
     /*** add the imu of the last frame-tail to the of current frame-head ***/
@@ -968,8 +969,10 @@ void ImuProcess::Process2( LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poi
         return;
     }
 
+    // 传感器数据中包含了lidar+imu数据 -> 并且其是一个队列结构(这里是从最后取数据-没有将原始数据弹出)
     MeasureGroup meas = lidar_meas.measures.back();
 
+    // 判断imu是否需要初始化
     if ( imu_need_init_ )
     {
         double pcl_end_time = lidar_meas.is_lidar_end ? lidar_meas.lidar_beg_time + lidar_meas.lidar->points.back().curvature / double( 1000 )
@@ -981,11 +984,12 @@ void ImuProcess::Process2( LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poi
             return;
         };
         /// The very first lidar frame
+        // 也是想与基本的重力加速度进行对齐(但是最后生成的R，t没有被赋值，只是被正常初始化了)
         IMU_init( meas, stat, init_iter_num );
 
         imu_need_init_ = true;
 
-        last_imu_ = meas.imu.back();
+        last_imu_ = meas.imu.back(); // 这里被重复使用了两次 IMU_init_也运行了一次
 
         if ( init_iter_num > MAX_INI_COUNT )
         {
