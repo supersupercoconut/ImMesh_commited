@@ -154,8 +154,14 @@ bool Image_frame::project_3d_to_2d(const pcl::PointXYZI & in_pt, Eigen::Matrix3d
     vec_3 pt_w(in_pt.x, in_pt.y, in_pt.z), pt_cam;
 //     pt_cam = (m_pose_w2c_q.inverse() * pt_w - m_pose_w2c_q.inverse()*m_pose_w2c_t);
     pt_cam = (m_pose_c2w_q * pt_w + m_pose_c2w_t);
+
+    LOG(INFO) << "m_pose_c2w_q" << m_pose_c2w_q.x() << " " << m_pose_c2w_q.y() << " " << m_pose_c2w_q.z() << " " << m_pose_c2w_q.w() << " ";
+    LOG(INFO) << "m_pose_c2w_t" << m_pose_c2w_t;
+    LOG(INFO) << "pt_cam" <<pt_cam;
+
     if (pt_cam(2) < 0.001)
     {
+        LOG(INFO) << "falsecrev w";
         return false;
     }
 
@@ -327,11 +333,13 @@ bool Image_frame::project_3d_point_in_this_img(const pcl::PointXYZI & in_pt, dou
 {
     if (project_3d_to_2d(in_pt, m_cam_K, u, v, intrinsic_scale) == false)
     {
+        LOG(INFO) << "project_3d_to_2d: " << "false";
         return false;
     }
     if (if_2d_points_available(u, v, intrinsic_scale) == false)
     {
         // printf_line;
+        LOG(INFO) <<" if_2d_points_available: " << "false";
         return false;
     }
     if (rgb_pt != nullptr)

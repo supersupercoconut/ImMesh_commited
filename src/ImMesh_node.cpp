@@ -183,117 +183,116 @@ void get_last_avr_pose( int current_frame_idx, Eigen::Quaterniond &q_avr, vec_3 
 }
 
 /// @attention 这里是新开启了一个线程进行数据处理 | 并且在实际使用的时候关闭了GUI显示部分(为了关闭GUI 我注释掉了main函数中所有与GUI显示有关的部分，以及全部变量GL_camera g_gl_camera 还注释掉了一个完整的文件 mesh_rec_display.cpp)
-//void point_cloud_colored()
-//{
-//    LOG(INFO) << "---- Staring the texture of point cloud ----" ;
-//    // 读取相机参数(内外参)
-//    g_map_rgb_pts_mesh.init_ros_node();
-//
-//    // 获取点云数据
-//    pcl::PointCloud< pcl::PointXYZI > offline_pts;
-//    LOG(INFO) << "Input the point_cloud and camera data";
-//    fflush( stdout );       // C中的操作 | 刷新缓冲区，并且数据全部输出出来
-//    pcl::io::loadPCDFile( "/home/supercoconut/Myfile/datasets/m2DGR/output/pointcloud_20.pcd", offline_pts );
-//
-//
-//    g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points | 但这个也不是最后u_f v_f离奇结果的原因
-//    LOG(INFO) << "The size of pts = " << offline_pts.points.size();
-//    LOG(INFO) << "g_map_rgb_pts_mesh.m_minimum_pts_size = " << g_map_rgb_pts_mesh.m_minimum_pts_size;
-//
-//
-//    // 因为这里只输入一帧数据，所以这里定义为1 | 随便定义点云跳转的数据为4
-//    g_map_rgb_pts_mesh.append_points_to_global_map( offline_pts, 1, nullptr, 1 );
-//
-//    // 获取图像数据与点云数据(在global_Map中保留一个Image_frame的变量或者buffer即可)
-//
-//    // 知道哪些voxel需要被处理(这个数据会跟临时定义的voxels_recent_visited变量进行数据互换，所以没有显示地让整个数据清空的操作)
-//    std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited = g_map_rgb_pts_mesh.m_voxels_recent_visited;
-//    LOG(INFO) << "The size of voxels_recent_visited is: "<< g_map_rgb_pts_mesh.m_voxels_recent_visited.size();
-//
-//    // 获取用于投影点
-//    std::vector<std::shared_ptr<RGB_pts>> pts_for_projection;
-//    for(auto i = voxels_recent_visited.begin(); i!= voxels_recent_visited.end(); i++)
-//    {
-//        if ( ( *i )->m_pts_in_grid.size() )
-//            pts_for_projection.push_back( (*i)->m_pts_in_grid.back() );
-//    }
-//
-//    /// @bug 这个点的数量好像与在加入线程中的数量不太一样(但至少是加入进来了)
-//    LOG(INFO) << "The total points in pts_for_projection : "<< pts_for_projection.size();
-//
-//    Hash_map_2d<int, int> mask_index;
-//    Hash_map_2d<int, float> mask_depth;
-//
-//    // 后面这部分的变量只是存储数据的部分
-//    std::map<int, cv::Point2f> map_idx_draw_center;
-//    std::map<int, cv::Point2f> map_idx_draw_center_raw_pose;
-//
-//    // 获取图像信息 | 需要设置 坐标系转换 + 内参信息 | 已知camera到lidar的旋转矩阵 (lidar系与world系同步)
-////    cv::Mat temp_img = cv::imread("/home/supercoconut/Myfile/datasets/R3LIVE/hku_park_01/output/image_2.png", cv::IMREAD_COLOR);
-//    cv::Mat temp_img = cv::imread("/home/supercoconut/Myfile/datasets/m2DGR/output/image_20.jpg", cv::IMREAD_COLOR);
-//    LOG(INFO) << " temp_img.cols: " << temp_img.cols << "temp_img.rows: " << temp_img.rows;
-//
-//    Eigen::Matrix3d g_cam_K;
-//    g_cam_K <<  617.971050917033,0.0,327.710279392468,
-//                0.0, 616.445131524790, 253.976983707814,
-//                0.0, 0.0, 1;
-////    g_cam_K << 863.4241, 0.0, 640.6808,
-////            0.0,  863.4171, 518.3392,
-////            0.0, 0.0, 1.0;
-//    Eigen::Matrix<double, 5, 1> g_cam_dist;
-//
-//    std::vector< double > camera_dist_data = {0.148000794688248,-0.217835187249065,0,0,0};
-////    std::vector< double > camera_dist_data = {-0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
-//    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_data.data() );
-//    g_cam_dist = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( m_camera_dist_coeffs.data() );
-//    cv::Mat intrinsic, dist_coeffs;
-//    cv::eigen2cv( g_cam_K, intrinsic );
-//    cv::eigen2cv( g_cam_dist, dist_coeffs );
-//    LOG(INFO) << "intrinsic " << intrinsic.size;
-//    LOG(INFO) << "dist_coeffs " << dist_coeffs.size;
-//    cv::Mat m_ud_map1, m_ud_map2;
-//
-//    // 生成畸变映射表
-//    initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size( temp_img.cols, temp_img.rows ),
-//                             CV_16SC2, m_ud_map1, m_ud_map2 );
-//
-//    std::shared_ptr< Image_frame > image_pose = std::make_shared< Image_frame >( g_cam_K );
-//    cv::remap( temp_img, image_pose->m_img, m_ud_map1, m_ud_map2, cv::INTER_LINEAR );
-//    LOG(INFO) << "image_pose->m_img.rows" << image_pose->m_img.rows;
-//
-//    image_pose->m_timestamp = ros::Time::now().toSec();
-//    image_pose->init_cubic_interpolation();
-//    image_pose->image_equalize();
-//    LOG(INFO) << "m_img_gray" << image_pose->m_img_gray.size;
-//
-//    mat_3_3 R_w2c;
-//    R_w2c <<  0, 0, 1,
-//                -1, 0, 0,
-//                0, -1, 0;
-//    vec_3 pose_t(0.30456, 0.00065, 0.65376);
-////    R_w2c << -0.00113207, -0.0158688, 0.999873,
-////            -0.9999999,  -0.000486594, -0.00113994,
-////            0.000504622,  -0.999874,  -0.0158682;
-////    vec_3 pose_t(0.0, 0.0, 0.0);
-//    image_pose->set_pose( eigen_q( R_w2c ), pose_t );
-//
-//
-//    std::vector< cv::Point2f >                pts_2d_vec;
-//    std::vector< std::shared_ptr< RGB_pts > > rgb_pts_vec;
-//    // 这个函数中直接得到: rgb_pts_vec(3D点) pts_2d_vec(2D点)
-//    g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
-//
-//
-//    for (const auto& point : pts_2d_vec) {
-//        cv::circle(image_pose->m_img, point, 1, cv::Scalar(0, 255, 0), -1); // 绘制红色圆点
-//    }
-//
-//    // 显示图像
-//    cv::imshow("Image with Points", image_pose->m_img);
-//    cv::waitKey(0);
-//
-//
-//}
+void point_cloud_colored_try()
+{
+    LOG(INFO) << "---- Staring the texture of point cloud ----" ;
+    // 读取相机参数(内外参)
+    g_map_rgb_pts_mesh.init_ros_node();
+
+    // 获取点云数据
+    pcl::PointCloud< pcl::PointXYZI > offline_pts;
+    LOG(INFO) << "Input the point_cloud and camera data";
+    fflush( stdout );       // C中的操作 | 刷新缓冲区，并且数据全部输出出来
+    pcl::io::loadPCDFile( "/home/supercoconut/Myfile/datasets/m2DGR/output/pointcloud_20.pcd", offline_pts );
+
+    g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points | 但这个也不是最后u_f v_f离奇结果的原因
+    LOG(INFO) << "The size of pts = " << offline_pts.points.size();
+    LOG(INFO) << "g_map_rgb_pts_mesh.m_minimum_pts_size = " << g_map_rgb_pts_mesh.m_minimum_pts_size;
+
+
+    // 因为这里只输入一帧数据，所以这里定义为1 | 随便定义点云跳转的数据为4
+    g_map_rgb_pts_mesh.append_points_to_global_map( offline_pts, 1, nullptr, 1 );
+
+    // 获取图像数据与点云数据(在global_Map中保留一个Image_frame的变量或者buffer即可)
+
+    // 知道哪些voxel需要被处理(这个数据会跟临时定义的voxels_recent_visited变量进行数据互换，所以没有显示地让整个数据清空的操作)
+    std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited = g_map_rgb_pts_mesh.m_voxels_recent_visited;
+    LOG(INFO) << "The size of voxels_recent_visited is: "<< g_map_rgb_pts_mesh.m_voxels_recent_visited.size();
+
+    // 获取用于投影点
+    std::vector<std::shared_ptr<RGB_pts>> pts_for_projection;
+    for(auto i = voxels_recent_visited.begin(); i!= voxels_recent_visited.end(); i++)
+    {
+        if ( ( *i )->m_pts_in_grid.size() )
+            pts_for_projection.push_back( (*i)->m_pts_in_grid.back() );
+    }
+
+    /// @bug 这个点的数量好像与在加入线程中的数量不太一样(但至少是加入进来了)
+    LOG(INFO) << "The total points in pts_for_projection : "<< pts_for_projection.size();
+
+    Hash_map_2d<int, int> mask_index;
+    Hash_map_2d<int, float> mask_depth;
+
+    // 后面这部分的变量只是存储数据的部分
+    std::map<int, cv::Point2f> map_idx_draw_center;
+    std::map<int, cv::Point2f> map_idx_draw_center_raw_pose;
+
+    // 获取图像信息 | 需要设置 坐标系转换 + 内参信息 | 已知camera到lidar的旋转矩阵 (lidar系与world系同步)
+//    cv::Mat temp_img = cv::imread("/home/supercoconut/Myfile/datasets/R3LIVE/hku_park_01/output/image_2.png", cv::IMREAD_COLOR);
+    cv::Mat temp_img = cv::imread("/home/supercoconut/Myfile/datasets/m2DGR/output/image_20.jpg", cv::IMREAD_COLOR);
+    LOG(INFO) << " temp_img.cols: " << temp_img.cols << "temp_img.rows: " << temp_img.rows;
+
+    Eigen::Matrix3d g_cam_K;
+    g_cam_K <<  617.971050917033,0.0,327.710279392468,
+                0.0, 616.445131524790, 253.976983707814,
+                0.0, 0.0, 1;
+//    g_cam_K << 863.4241, 0.0, 640.6808,
+//            0.0,  863.4171, 518.3392,
+//            0.0, 0.0, 1.0;
+    Eigen::Matrix<double, 5, 1> g_cam_dist;
+
+    std::vector< double > camera_dist_data = {0.148000794688248,-0.217835187249065,0,0,0};
+//    std::vector< double > camera_dist_data = {-0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
+    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_data.data() );
+    g_cam_dist = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( m_camera_dist_coeffs.data() );
+    cv::Mat intrinsic, dist_coeffs;
+    cv::eigen2cv( g_cam_K, intrinsic );
+    cv::eigen2cv( g_cam_dist, dist_coeffs );
+    LOG(INFO) << "intrinsic " << intrinsic.size;
+    LOG(INFO) << "dist_coeffs " << dist_coeffs.size;
+    cv::Mat m_ud_map1, m_ud_map2;
+
+    // 生成畸变映射表
+    initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size( temp_img.cols, temp_img.rows ),
+                             CV_16SC2, m_ud_map1, m_ud_map2 );
+
+    std::shared_ptr< Image_frame > image_pose = std::make_shared< Image_frame >( g_cam_K );
+    cv::remap( temp_img, image_pose->m_img, m_ud_map1, m_ud_map2, cv::INTER_LINEAR );
+    LOG(INFO) << "image_pose->m_img.rows" << image_pose->m_img.rows;
+
+    image_pose->m_timestamp = ros::Time::now().toSec();
+    image_pose->init_cubic_interpolation();
+    image_pose->image_equalize();
+    LOG(INFO) << "m_img_gray" << image_pose->m_img_gray.size;
+
+    mat_3_3 R_w2c;
+    R_w2c <<  0, 0, 1,
+                -1, 0, 0,
+                0, -1, 0;
+    vec_3 pose_t(0.30456, 0.00065, 0.65376);
+//    R_w2c << -0.00113207, -0.0158688, 0.999873,
+//            -0.9999999,  -0.000486594, -0.00113994,
+//            0.000504622,  -0.999874,  -0.0158682;
+//    vec_3 pose_t(0.0, 0.0, 0.0);
+    image_pose->set_pose( eigen_q( R_w2c ), pose_t );
+
+
+    std::vector< cv::Point2f >                pts_2d_vec;
+    std::vector< std::shared_ptr< RGB_pts > > rgb_pts_vec;
+    // 这个函数中直接得到: rgb_pts_vec(3D点) pts_2d_vec(2D点)
+    g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
+
+
+    for (const auto& point : pts_2d_vec) {
+        cv::circle(image_pose->m_img, point, 1, cv::Scalar(0, 255, 0), -1); // 绘制红色圆点
+    }
+
+    // 显示图像
+    cv::imshow("Image with Points", image_pose->m_img);
+    cv::waitKey(0);
+
+
+}
 
 
 
@@ -391,7 +390,7 @@ int main( int argc, char **argv )
     // 里程计信息正常work(关闭了对应的Mesh重建部分)
     std::thread thr_mapping = std::thread( &Voxel_mapping::service_LiDAR_update, &voxel_mapping );
     // 新建线程使用r3live/r3live++中提供的点云信息 | 点云地图还是使用Global map中的实现 对其camera信息看r3live的方法
-//    std::thread thr_mapping = std::thread(point_cloud_colored);
+//    std::thread thr_mapping = std::thread(point_cloud_colored_try);
     std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
 
 //    Common_tools::Timer disp_tim;

@@ -891,10 +891,14 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     nh.param< bool >( "pcd_save/pcd_save_en", m_pcd_save_en, false );
     nh.param< bool >( "image_save/img_save_en", m_img_save_en, false );
     nh.param< bool >( "feature_extract_enable", m_p_pre->feature_enabled, false );
+
+    ///////////////////////////// 注意这里的参数可能会在后面的部分被修改了 因为没有使用ros来读取yaml参数, 只好手动读取参数值 ///////////////////
     nh.param< vector< double > >( "mapping/extrinsic_T", m_extrin_T, vector< double >() );
     nh.param< vector< double > >( "mapping/extrinsic_R", m_extrin_R, vector< double >() );
     nh.param< vector< double > >( "camera/Pcl", m_camera_extrin_T, vector< double >() );
     nh.param< vector< double > >( "camera/Rcl", m_camera_extrin_R, vector< double >() );
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     nh.param< int >( "grid_size", m_grid_size, 40 );
     nh.param< int >( "patch_size", m_patch_size, 8 );
     nh.param< double >( "outlier_threshold", m_outlier_threshold, 78 );
@@ -951,6 +955,12 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     m_camera_ext_R = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_ext_R_data.data() );
     m_camera_ext_t = Eigen::Map< Eigen::Matrix< double, 3, 1 > >( camera_ext_t_data.data() );
 
+    /*** lidar到body(也可能是imu系的转换) ***/
+    m_extrin_R = {1,0,0,
+                  0,1,0,
+                  0,0,1};
+    m_extrin_T = {0,0,0};
+
     cv::eigen2cv(m_camera_intrinsic, intrinsic);
     cv::eigen2cv(m_camera_dist_coeffs, dist_coeffs);
     /*设置去畸变参数等等*/
@@ -967,6 +977,7 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     ROS_INFO("Subscribing to topic: %s", m_img_topic.c_str());
 
 
+
     cout << "[Ros_parameter]: Camera Intrinsic: " << endl;
     cout << m_camera_intrinsic << endl;
     cout << "[Ros_parameter]: Camera distcoeff: " << m_camera_dist_coeffs.transpose() << endl;
@@ -980,8 +991,6 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     cout << "Ranging cov:" << m_dept_err << " , angle cov:" << m_beam_err << std::endl;
     cout << "Meshing distance scale:" << m_meshing_distance_scale << " , points minimum scale:" << m_meshing_points_minimum_scale << std::endl;
 
-    LOG(INFO) << "m_img_en" << m_img_en;
-    LOG(INFO) << "m_lidar_en" << m_lidar_en;
 
 }
 

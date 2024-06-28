@@ -292,21 +292,21 @@ struct Global_map
 
     ///////////////////////////////////////////////////////////////// 补充一些自定义的变量以及参数 /////////////////////////////////////////////////////////////////
     /* Global_map 设置一些基本参数 | R3live中关于相机内外参的读取信息都是先保存在r3live这个类中，再转换给Image_frame中进行数据处理 */
-//    std::shared_ptr< ros::NodeHandle > m_ros_node_ptr = nullptr;
-//    std::deque<std::shared_ptr<Image_frame>> m_queue_image_with_pose;
-//
-//    cv::Mat m_ud_map1, m_ud_map2;
-//    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_intrinsic;
-//    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs;
-//    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_ext_R;
-//    Eigen::Matrix<double, 3, 1> m_camera_ext_t;
-//    cv::Mat intrinsic, dist_coeffs;
-//
-//    std::mutex g_mutex_render;
-//    double m_camera_start_ros_tim = -3e8;
-//
-//    void init_ros_node();
-//    void read_ros_parameters(ros::NodeHandle &nh);
+    std::shared_ptr< ros::NodeHandle > m_ros_node_ptr = nullptr;
+    std::deque<std::shared_ptr<Image_frame>> m_queue_image_with_pose;
+
+    cv::Mat m_ud_map1, m_ud_map2;
+    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_intrinsic;
+    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs;
+    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_ext_R;
+    Eigen::Matrix<double, 3, 1> m_camera_ext_t;
+    cv::Mat intrinsic, dist_coeffs;
+
+    std::mutex g_mutex_render;
+    double m_camera_start_ros_tim = -3e8;
+
+    void init_ros_node();
+    void read_ros_parameters(ros::NodeHandle &nh);
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

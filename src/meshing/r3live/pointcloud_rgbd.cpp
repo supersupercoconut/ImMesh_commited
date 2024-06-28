@@ -425,7 +425,7 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
     int acc = 0;
     int rej = 0;
 
-    // 无论需要添加点做什么,这里一定是空
+    // clear的作用只是清空数据,但是不会让其指向一个nullptr的部分
     if ( pts_added_vec != nullptr )
     {
         pts_added_vec->clear();
@@ -472,7 +472,6 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
 
     KDtree_pt_vector     pt_vec_vec;
     std::vector< float > dist_vec;
-    int count = 0;
     RGB_voxel_ptr* temp_box_ptr_ptr;
 
     for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
@@ -487,6 +486,8 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
         int  box_y = std::round( pc_in.points[ pt_idx ].y / m_voxel_resolution );
         int  box_z = std::round( pc_in.points[ pt_idx ].z / m_voxel_resolution );
         auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );  // 查找是否存在数据
+
+        // 如果找的到
         if ( pt_ptr != nullptr )
         {
             add = 0;
@@ -495,13 +496,11 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
                 pts_added_vec->push_back( *pt_ptr );
             }
         }
-        else
-            count++;
-
 
         // 查找voxel现在有没有
         RGB_voxel_ptr box_ptr;
         temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
+        // 没找到voxel
         if ( temp_box_ptr_ptr == nullptr )
         {
             box_ptr = std::make_shared< RGB_Voxel >( box_x, box_y, box_z );
@@ -515,6 +514,8 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
         // 根据点的位置, 找到对应的voxel位置
         voxels_recent_visited.insert( box_ptr );
         box_ptr->m_last_visited_time = added_time;
+
+        // acc == 0说明这个点已经存在了,不需要再处理
         if ( add == 0 )
         {
             rej++;
@@ -526,7 +527,7 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
         }
 
         acc++;
-        // 新建一个Kdtree中对应的点数据 | 总之就是进行了一个查找(让新点不要与之前的点在同一个grid中) | 但是与上面在hash表中查找的点是否存在最后生成的点的数量貌似有一点不太一样
+        // 新建一个Kdtree中对应的点数据 | 总之就是进行了一个查找(让新点不要与之前的点在同一个grid中) | hash表中保留的数据与KD_tree中保留的数据有一些不一样
         KDtree_pt kdtree_pt( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ), 0 );
         if ( m_kdtree.Root_Node != nullptr )
         {
@@ -539,6 +540,7 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
                     continue;
             }
         }
+
         std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
         pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
         pt_rgb->m_pt_index = m_rgb_pts_vec.size();
@@ -572,14 +574,14 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
     if(pts_added_vec != nullptr)
         LOG(INFO) << "[service_reconstruct_mesh] New "<<pts_added_vec->size() <<" points are added in the global map!";
     else
-        LOG(INFO) << "[service_reconstruct_mesh] New "<< count << " points are added in the global map and The pts_added_vec is empty!!";
-
+        LOG(INFO) << "[service_reconstruct_mesh] New "<< acc << " points are added in the global map and The pts_added_vec is empty!!";
 
     m_in_appending_pts = 0;
     m_mutex_m_box_recent_hitted->lock();
     std::swap( m_voxels_recent_visited, voxels_recent_visited );
     // m_voxels_recent_visited = voxels_recent_visited ;
     m_mutex_m_box_recent_hitted->unlock();
+
     return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
 }
 
@@ -852,10 +854,13 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
     }
 
     int pts_size = pts_for_projection.size();
+    LOG(INFO) << "pts_size for projection" << pts_size ;
+
     for ( int pt_idx = 0; pt_idx < pts_size; pt_idx += skip_step )
     {
         vec_3  pt = pts_for_projection[ pt_idx ]->get_pos();
         double depth = ( pt - image_pose->m_pose_w2c_t ).norm();
+        LOG(INFO) << " depth: " << depth ;
         if ( depth > m_maximum_depth_for_projection )
         {
             continue;
@@ -867,8 +872,11 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
         bool res = image_pose->project_3d_point_in_this_img( pt, u_f, v_f, nullptr, 1.0 );
         if ( res == false )
         {
+            LOG(INFO) << " false ";
             continue;
         }
+
+
         u = std::round( u_f / minimum_dis ) * minimum_dis; // Why can not work
         v = std::round( v_f / minimum_dis ) * minimum_dis;
         if ( ( !mask_depth.if_exist( u, v ) ) || mask_depth.m_map_2d_hash_map[ u ][ v ] > depth )
@@ -906,6 +914,8 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
         }
     }
 
+    LOG(INFO) << "pc_2d_out_vec: " << pc_2d_out_vec->size();
+    LOG(INFO) << "pc_out_vec: " << pc_out_vec->size();
     LOG(INFO) << "[selection_points_for_projection]" << "add points: " << acc <<"replace points: " << blk_rej;
 }
 
@@ -994,67 +1004,67 @@ vec_3 Global_map::smooth_pts( RGB_pt_ptr& rgb_pt, double smooth_factor, double k
 }
 
 ////////////////////////////////////////////// 按照R3live类补充的部分 /////////////////////////////////////////////////////////////////
-//void Global_map::init_ros_node() {
-//    m_ros_node_ptr = std::make_shared< ros::NodeHandle >();
-//    read_ros_parameters( *m_ros_node_ptr );
-//}
-//
-///*这里读取一些基本的参数即可 | 而且这里读取数据来源是ros的参数服务器(这里暂时不考虑) - 直接使用默认的参数设置 */
-//// 从ros中读取到的参数都是vector，所以这里还需要转换
-//void Global_map::read_ros_parameters(ros::NodeHandle &nh)
-//{
-//    LOG(INFO) << "Loading camera parameter";
-//    // 图像大小
-//    int width = 640;
-//    int height = 480;
-//    // 相机内参(后期可以更换成ros中读取参数)
-//    std::vector< double > camera_intrinsic_data, camera_dist_coeffs_data, camera_ext_R_data, camera_ext_t_data;
-//
-//    /* m2DGR数据集 */
-//    camera_intrinsic_data = { 617.971050917033,0.0,327.710279392468,
-//                              0.0, 616.445131524790, 253.976983707814,
-//                              0.0, 0.0, 1};
-//    camera_dist_coeffs_data = { 0.148000794688248, -0.217835187249065, 0.0, 0.0 ,0.0};
+void Global_map::init_ros_node() {
+    m_ros_node_ptr = std::make_shared< ros::NodeHandle >();
+    read_ros_parameters( *m_ros_node_ptr );
+}
+
+/*这里读取一些基本的参数即可 | 而且这里读取数据来源是ros的参数服务器(这里暂时不考虑) - 直接使用默认的参数设置 */
+// 从ros中读取到的参数都是vector，所以这里还需要转换
+void Global_map::read_ros_parameters(ros::NodeHandle &nh)
+{
+    LOG(INFO) << "Loading camera parameter";
+    // 图像大小
+    int width = 640;
+    int height = 480;
+    // 相机内参(后期可以更换成ros中读取参数)
+    std::vector< double > camera_intrinsic_data, camera_dist_coeffs_data, camera_ext_R_data, camera_ext_t_data;
+
+    /* m2DGR数据集 */
+    camera_intrinsic_data = { 617.971050917033,0.0,327.710279392468,
+                              0.0, 616.445131524790, 253.976983707814,
+                              0.0, 0.0, 1};
+    camera_dist_coeffs_data = { 0.148000794688248, -0.217835187249065, 0.0, 0.0 ,0.0};
+    // Lidar到camera的旋转+平移
+    camera_ext_R_data ={0, 0, 1,
+                        -1, 0, 0,
+                        0, -1, 0};
+
+    camera_ext_t_data = {0.30456, 0.00065, 0.65376};
+
+    /*r3live数据集*/
+//    camera_intrinsic_data = { 863.4241, 0.0, 640.6808,
+//                              0.0,  863.4171, 518.3392,
+//                              0.0, 0.0, 1.0};
+//    camera_dist_coeffs_data = { -0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
 //    // Lidar到camera的旋转+平移
-//    camera_ext_R_data ={0, 0, 1,
-//                        -1, 0, 0,
-//                        0, -1, 0};
+//    camera_ext_R_data ={-0.00113207, -0.0158688, 0.999873,
+//                        -0.9999999,  -0.000486594, -0.00113994,
+//                        0.000504622,  -0.999874,  -0.0158682};
 //
-//    camera_ext_t_data = {0.30456, 0.00065, 0.65376};
-//
-//    /*r3live数据集*/
-////    camera_intrinsic_data = { 863.4241, 0.0, 640.6808,
-////                              0.0,  863.4171, 518.3392,
-////                              0.0, 0.0, 1.0};
-////    camera_dist_coeffs_data = { -0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
-////    // Lidar到camera的旋转+平移
-////    camera_ext_R_data ={-0.00113207, -0.0158688, 0.999873,
-////                        -0.9999999,  -0.000486594, -0.00113994,
-////                        0.000504622,  -0.999874,  -0.0158682};
-////
-////    camera_ext_t_data = {0.0, 0.0, 0.0};
-//
-//    /*Global中的类成员读取参数 */
-//    m_camera_intrinsic = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_intrinsic_data.data() );
-//    m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_coeffs_data.data() );
-//    m_camera_ext_R = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_ext_R_data.data() );
-//    m_camera_ext_t = Eigen::Map< Eigen::Matrix< double, 3, 1 > >( camera_ext_t_data.data() );
-//
-//    cv::eigen2cv(m_camera_intrinsic, intrinsic);
-//    cv::eigen2cv(m_camera_dist_coeffs, dist_coeffs);
-//    /*设置去畸变参数等等*/
-//    initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size(width, height),
-//                                      CV_16SC2, m_ud_map1, m_ud_map2 );
-//
-//    cout << "[Ros_parameter]: Camera Intrinsic: " << endl;
-//    cout << m_camera_intrinsic << endl;
-//    cout << "[Ros_parameter]: Camera distcoeff: " << m_camera_dist_coeffs.transpose() << endl;
-//    cout << "[Ros_parameter]: Camera extrinsic R: " << endl;
-//    cout << m_camera_ext_R << endl;
-//    cout << "[Ros_parameter]: Camera extrinsic T: " << m_camera_ext_t.transpose() << endl;
-//
-//
-//    // ros参数服务器的时候获取数据的方法
-//    //m_ros_node_ptr->getParam( "r3live_vio/camera_intrinsic", camera_intrinsic_data );
-//    std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
-//}
+//    camera_ext_t_data = {0.0, 0.0, 0.0};
+
+    /*Global中的类成员读取参数 */
+    m_camera_intrinsic = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_intrinsic_data.data() );
+    m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_coeffs_data.data() );
+    m_camera_ext_R = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_ext_R_data.data() );
+    m_camera_ext_t = Eigen::Map< Eigen::Matrix< double, 3, 1 > >( camera_ext_t_data.data() );
+
+    cv::eigen2cv(m_camera_intrinsic, intrinsic);
+    cv::eigen2cv(m_camera_dist_coeffs, dist_coeffs);
+    /*设置去畸变参数等等*/
+    initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size(width, height),
+                                      CV_16SC2, m_ud_map1, m_ud_map2 );
+
+    cout << "[Ros_parameter]: Camera Intrinsic: " << endl;
+    cout << m_camera_intrinsic << endl;
+    cout << "[Ros_parameter]: Camera distcoeff: " << m_camera_dist_coeffs.transpose() << endl;
+    cout << "[Ros_parameter]: Camera extrinsic R: " << endl;
+    cout << m_camera_ext_R << endl;
+    cout << "[Ros_parameter]: Camera extrinsic T: " << m_camera_ext_t.transpose() << endl;
+
+
+    // ros参数服务器的时候获取数据的方法
+    //m_ros_node_ptr->getParam( "r3live_vio/camera_intrinsic", camera_intrinsic_data );
+    std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
+}

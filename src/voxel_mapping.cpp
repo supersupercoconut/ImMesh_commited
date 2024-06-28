@@ -1769,10 +1769,8 @@ int Voxel_mapping::service_LiDAR_update()
     /// @bug 这个部分不能卸载while()循环中,一个线程不能在while()里面被频繁地使用以及销毁 | g_color_point_thr作为全局变量控制整个线程
     if( g_color_point_thr == nullptr )
     {
-//        g_color_point_thr = new std::thread( point_cloud_colored ); // 启动点云上色线程
         g_color_point_thr = std::make_unique<std::thread>(point_cloud_colored);     // unique_ptr 对应的 thread , 不需要delete
     }
-
 
     // 整个lidar数据处理的核心
     while ( ( status = ros::ok() ) )
@@ -1793,7 +1791,6 @@ int Voxel_mapping::service_LiDAR_update()
 //                cv::imshow("cvfds", m_Lidar_Measures.measures.back().img );
 //                cv::waitKey(0);
 //            }
-
             rate.sleep();
             continue;
         }
@@ -1899,7 +1896,6 @@ int Voxel_mapping::service_LiDAR_update()
         if ( !m_use_new_map )
             laser_map_fov_segment();
 
-
         /*** downsample the feature points in a scan ***/
         // m_downSizeFilterSurf对应的类型为pcl::VoxelGrid<pcl::PointXYZINormal> | 使用的filter也不过时将一个voxel中的点云用一个点来表示
         m_downSizeFilterSurf.setInputCloud( m_feats_undistort );
@@ -2001,12 +1997,22 @@ int Voxel_mapping::service_LiDAR_update()
 
         // 数据导入
 
+
         pcl::PointCloud< pcl::PointXYZI >::Ptr world_lidar_full( new pcl::PointCloud< pcl::PointXYZI > );
-        // 转换到世界系
-        transformLidar( state.rot_end, state.pos_end, m_feats_undistort, world_lidar_full );
+
+        //        cout << m_extR << endl;
+//        cout << m_extT.transpose() <<endl;
+
+//        transformLidar( state.rot_end, state.pos_end, m_feats_undistort, world_lidar_full );
+        Eigen::Matrix3d i = Eigen::Matrix3d::Identity();
+        Eigen::Vector3d j;
+        j << 0.0, 0.0, 0.0;
+        transformLidar( i, j, m_feats_undistort, world_lidar_full );
+
 
         // 注意这里保留数据的部分 —— m_Lidar_Measures的measures是一个队列数据(其中直接保留数据) 由于这里使用了ros::spinOnce来控制,所以back()拿到的一定是最新的图像数据(一次同步只会更新一次)
         g_mutex_all_data_package_lock.lock();
+//        g_rec_color_data_package_list.emplace_back(world_lidar_full, m_Lidar_Measures.measures.back().img, Eigen::Quaterniond( state.rot_end ), state.pos_end, g_data_id);
         g_rec_color_data_package_list.emplace_back(world_lidar_full, m_Lidar_Measures.measures.back().img, Eigen::Quaterniond( state.rot_end ), state.pos_end, g_data_id);
 //        LOG(INFO) << "g_rec_color_data_package_list" << g_rec_color_data_package_list.back().m_img.cols;
         g_mutex_all_data_package_lock.unlock();
@@ -2238,8 +2244,8 @@ void point_cloud_colored()
 {
     LOG(INFO) << "---- Staring the texture of point cloud ----" ;
     // 读取数据(先保证一帧一帧没有问题)
-    while(ros::ok())
-    {
+//    while(ros::ok())
+//    {
         while(g_rec_color_data_package_list.empty())
         {
             std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
@@ -2258,11 +2264,18 @@ void point_cloud_colored()
         cv::Mat img = data_temp.m_img;
 //        LOG(INFO) << "image data" << data_temp.m_img.cols;
         // 这里应该是imu系到world系的旋转平移 | 所以这里还需要一个内部的固定旋转关系来实现
+//        offline_pts->width = offline_pts->size();
+//        offline_pts->height = 1;
+//        pcl::io::savePCDFileASCII("/home/supercoconut/Myfile/immesh_ws/src/ImMesh/output.pcd", *offline_pts);
 
-        Eigen::Matrix3d rot = data_temp.m_pose_q.toRotationMatrix();
-        Eigen::Vector3d pos = data_temp.m_pose_t;
+        g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points | 但这个也不是最后u_f v_f离奇结果的原因
+        g_map_rgb_pts_mesh.append_points_to_global_map(*offline_pts, 1, nullptr, 2);
+        LOG(INFO) << "m_voxels_recent_visited: " << g_map_rgb_pts_mesh.m_voxels_recent_visited.size() ;
 
-        Eigen::Matrix3d rot_i2l = Eigen::Matrix3d::Identity();
+//        Eigen::Matrix3d rot = data_temp.m_pose_q.toRotationMatrix();
+//        Eigen::Vector3d pos = data_temp.m_pose_t;
+//
+//        Eigen::Matrix3d rot_i2l = Eigen::Matrix3d::Identity();
         Eigen::Matrix3d rot_l2c = Eigen::Matrix3d::Identity();
         rot_l2c << 0, 0, 1,
             -1, 0, 0,
@@ -2270,25 +2283,29 @@ void point_cloud_colored()
 
         Eigen::Vector3d pose_t;
         pose_t << 0.30456, 0.00065, 0.65376 ;
-        Eigen::Vector3d t_i2l;
-        t_i2l.setZero();
+//        Eigen::Vector3d t_i2l;
+//        t_i2l.setZero();
 
-        Eigen::Vector3d t_w2c = rot * rot_i2l * pose_t + rot * t_i2l + pos;
+//        Eigen::Vector3d t_w2c = rot * rot_i2l * pose_t + rot * t_i2l + pos;
         Eigen::Matrix3d g_cam_K;
         g_cam_K <<  617.971050917033,0.0,327.710279392468,
                     0.0, 616.445131524790, 253.976983707814,
                     0.0, 0.0, 1;
 
 
-        Eigen::Matrix3d R_w2c = rot*rot_i2l*rot_l2c;
+//        Eigen::Matrix3d R_w2c = rot*rot_i2l*rot_l2c;
         std::shared_ptr< Image_frame > image_pose = std::make_shared< Image_frame >( g_cam_K );
+//        image_pose->set_pose( eigen_q( R_w2c ), t_w2c );
         image_pose->m_img = img;
-        image_pose->set_pose( eigen_q( R_w2c ), t_w2c );
+        image_pose->set_pose( eigen_q( rot_l2c ), pose_t );
 
-        g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points | 但这个也不是最后u_f v_f离奇结果的原因
-        // 因为这里只输入一帧数据，所以这里定义为1 | 随便定义点云跳转的数据为4
-//        g_map_rgb_pts_mesh.append_points_to_global_map( offline_pts, 1, nullptr, 1 );
-        g_map_rgb_pts_mesh.append_points_to_global_map(*offline_pts, 1, nullptr, 2);
+
+        LOG(INFO) << "image_pose->m_img.rows" << image_pose->m_img.rows;
+
+        image_pose->m_timestamp = ros::Time::now().toSec();
+        image_pose->init_cubic_interpolation();
+        image_pose->image_equalize();
+
         std::vector< cv::Point2f >                pts_2d_vec;
         std::vector< std::shared_ptr< RGB_pts > > rgb_pts_vec;
         // 这个函数中直接得到: rgb_pts_vec(3D点) pts_2d_vec(2D点)
@@ -2305,88 +2322,7 @@ void point_cloud_colored()
 
 
 
-    }
-
-//    Eigen::Matrix3d g_cam_K;
-//    g_cam_K <<  617.971050917033,0.0,327.710279392468,
-//            0.0, 616.445131524790, 253.976983707814,
-//            0.0, 0.0, 1;
-////    g_cam_K << 863.4241, 0.0, 640.6808,
-////            0.0,  863.4171, 518.3392,
-////            0.0, 0.0, 1.0;
-//    Eigen::Matrix<double, 5, 1> g_cam_dist;
-//
-//    std::vector< double > camera_dist_data = {0.148000794688248,-0.217835187249065,0,0,0};
-////    std::vector< double > camera_dist_data = {-0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
-
-//    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_data.data() );
-//    g_cam_dist = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( m_camera_dist_coeffs.data() );
-//    cv::Mat intrinsic, dist_coeffs;
-//    cv::eigen2cv( g_cam_K, intrinsic );
-//    cv::eigen2cv( g_cam_dist, dist_coeffs );
-//    LOG(INFO) << "intrinsic " << intrinsic.size;
-//    LOG(INFO) << "dist_coeffs " << dist_coeffs.size;
-//    cv::Mat m_ud_map1, m_ud_map2;
-//
-//    // 生成畸变映射表
-//    initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size( temp_img.cols, temp_img.rows ),
-//                             CV_16SC2, m_ud_map1, m_ud_map2 );
-
-//    std::shared_ptr< Image_frame > image_pose = std::make_shared< Image_frame >( g_cam_K );
-//    cv::remap( temp_img, image_pose->m_img, m_ud_map1, m_ud_map2, cv::INTER_LINEAR );
-
-//    image_pose->m_timestamp = ros::Time::now().toSec();
-//    image_pose->init_cubic_interpolation();
-//    image_pose->image_equalize();
-//    LOG(INFO) << "m_img_gray" << image_pose->m_img_gray.size;
-
-//    mat_3_3 R_w2c;
-//    R_w2c <<  0, 0, 1,
-//            -1, 0, 0,
-//            0, -1, 0;
-//    vec_3 pose_t(0.30456, 0.00065, 0.65376);
-////    R_w2c << -0.00113207, -0.0158688, 0.999873,
-////            -0.9999999,  -0.000486594, -0.00113994,
-////            0.000504622,  -0.999874,  -0.0158682;
-////    vec_3 pose_t(0.0, 0.0, 0.0);
-//    image_pose->set_pose( eigen_q( R_w2c ), pose_t );
-
-//
-//    std::vector< cv::Point2f >                pts_2d_vec;
-//    std::vector< std::shared_ptr< RGB_pts > > rgb_pts_vec;
-//    // 这个函数中直接得到: rgb_pts_vec(3D点) pts_2d_vec(2D点)
-//    g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
-
-//
-//    for (const auto& point : pts_2d_vec) {
-//        cv::circle(image_pose->m_img, point, 1, cv::Scalar(0, 255, 0), -1); // 绘制红色圆点
-//    }
-//
-//    // 显示图像
-//    cv::imshow("Image with Points", image_pose->m_img);
-//    cv::waitKey(0);
-
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
