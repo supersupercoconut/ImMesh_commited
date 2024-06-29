@@ -802,6 +802,11 @@ void Global_map::render_with_a_image( std::shared_ptr< Image_frame >& img_ptr, i
     render_pts_in_voxels( img_ptr, pts_for_render );
 }
 
+
+/// @brief 3d点对图像进行投影 |
+/*
+ *
+ * */
 void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >& image_pose, std::vector< std::shared_ptr< RGB_pts > >* pc_out_vec,
                                                   std::vector< cv::Point2f >* pc_2d_out_vec, double minimum_dis, int skip_step, int use_all_pts )
 {
@@ -850,17 +855,21 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
     }
     else
     {
-        pts_for_projection = m_rgb_pts_vec;
+        pts_for_projection = m_rgb_pts_vec;             // m_rgb_pts_vec 为当前Global_map中的所有特征点
     }
 
     int pts_size = pts_for_projection.size();
-    LOG(INFO) << "pts_size for projection" << pts_size ;
+
+
+    // 定义一个 point_cloud 来处理数据 主要作用是将能投影的点云进行可视化(用于debug的操作)
+    //    pcl::PointCloud<pcl::PointXYZINormal>::Ptr my_pts_projection(new pcl::PointCloud<pcl::PointXYZINormal>);
+    //    my_pts_projection->clear();
 
     for ( int pt_idx = 0; pt_idx < pts_size; pt_idx += skip_step )
     {
         vec_3  pt = pts_for_projection[ pt_idx ]->get_pos();
         double depth = ( pt - image_pose->m_pose_w2c_t ).norm();
-        LOG(INFO) << " depth: " << depth ;
+//        LOG(INFO) << " depth: " << depth ;
         if ( depth > m_maximum_depth_for_projection )
         {
             continue;
@@ -872,11 +881,17 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
         bool res = image_pose->project_3d_point_in_this_img( pt, u_f, v_f, nullptr, 1.0 );
         if ( res == false )
         {
-            LOG(INFO) << " false ";
+//            LOG(INFO) << " false ";
             continue;
         }
 
+//        pcl::PointXYZINormal point;
+//        point.x = pt[0];
+//        point.y = pt[1];
+//        point.z = pt[2];
+//        my_pts_projection->push_back(point);
 
+        // 相当于将图像进行分割 会进行一个取整的过程
         u = std::round( u_f / minimum_dis ) * minimum_dis; // Why can not work
         v = std::round( v_f / minimum_dis ) * minimum_dis;
         if ( ( !mask_depth.if_exist( u, v ) ) || mask_depth.m_map_2d_hash_map[ u ][ v ] > depth )
@@ -897,6 +912,14 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
         }
     }
 
+    // 保存pcd文件
+//    my_pts_projection->width = my_pts_projection->points.size();
+//    my_pts_projection->height = 1;
+//    my_pts_projection->is_dense = false;
+//    // 保存点云到 PCD 文件
+//    pcl::io::savePCDFileASCII("/home/supercoconut/Myfile/immesh_ws/src/ImMesh/my_point_cloud.pcd", *my_pts_projection);
+
+
     if ( pc_out_vec != nullptr )
     {
         for ( auto it = map_idx_draw_center.begin(); it != map_idx_draw_center.end(); it++ )
@@ -910,7 +933,8 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
     {
         for ( auto it = map_idx_draw_center.begin(); it != map_idx_draw_center.end(); it++ )
         {
-            pc_2d_out_vec->push_back( map_idx_draw_center_raw_pose[ it->first ] );
+//            pc_2d_out_vec->push_back( map_idx_draw_center_raw_pose[ it->first ] );
+            pc_2d_out_vec->push_back(map_idx_draw_center[it->first] );
         }
     }
 
@@ -1055,6 +1079,9 @@ void Global_map::read_ros_parameters(ros::NodeHandle &nh)
     /*设置去畸变参数等等*/
     initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size(width, height),
                                       CV_16SC2, m_ud_map1, m_ud_map2 );
+
+    // 生成用于 Image_pose的图像数据
+
 
     cout << "[Ros_parameter]: Camera Intrinsic: " << endl;
     cout << m_camera_intrinsic << endl;

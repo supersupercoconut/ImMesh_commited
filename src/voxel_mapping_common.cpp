@@ -952,10 +952,11 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     /*Global中的类成员读取参数 */
     m_camera_intrinsic = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_intrinsic_data.data() );
     m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_coeffs_data.data() );
+    /*** camera转换到lidar ***/
     m_camera_ext_R = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_ext_R_data.data() );
     m_camera_ext_t = Eigen::Map< Eigen::Matrix< double, 3, 1 > >( camera_ext_t_data.data() );
 
-    /*** lidar到body(也可能是imu系的转换) ***/
+    /*** lidar转换到imu ***/
     m_extrin_R = {1,0,0,
                   0,1,0,
                   0,0,1};
@@ -971,26 +972,27 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
 //            intrinsic[ 3 ], intrinsic[ 4 ], intrinsic[ 5 ],
 //            intrinsic[ 6 ], intrinsic[ 7 ], intrinsic[ 8 ];
 
+    g_cam_k = m_camera_intrinsic;
 
-    ROS_INFO("Subscribing to topic: %s", m_lid_topic.c_str());
-    ROS_INFO("Subscribing to topic: %s", m_imu_topic.c_str());
-    ROS_INFO("Subscribing to topic: %s", m_img_topic.c_str());
+    LOG(INFO) << "g_cam_k: ";
+    LOG(INFO) << g_cam_k;
 
+    LOG(INFO) << "Subscribing to topic: " << m_lid_topic.c_str();
+    LOG(INFO) << "Subscribing to topic: " << m_imu_topic.c_str();
+    LOG(INFO) << "Subscribing to topic: " << m_img_topic.c_str();
 
 
     cout << "[Ros_parameter]: Camera Intrinsic: " << endl;
     cout << m_camera_intrinsic << endl;
     cout << "[Ros_parameter]: Camera distcoeff: " << m_camera_dist_coeffs.transpose() << endl;
-    cout << "[Ros_parameter]: Camera extrinsic R: " << endl;
+    cout << "[Ros_parameter]: Camera extrinsic R(camera to lidar): " << endl;
     cout << m_camera_ext_R << endl;
-    cout << "[Ros_parameter]: Camera extrinsic T: " << m_camera_ext_t.transpose() << endl;
+    cout << "[Ros_parameter]: Camera extrinsic T(camera to lidar): " << m_camera_ext_t.transpose() << endl;
     /////////////////////////////////////////////////
-
 
     m_p_pre->blind_sqr = m_p_pre->blind * m_p_pre->blind;
     cout << "Ranging cov:" << m_dept_err << " , angle cov:" << m_beam_err << std::endl;
     cout << "Meshing distance scale:" << m_meshing_distance_scale << " , points minimum scale:" << m_meshing_points_minimum_scale << std::endl;
-
 
 }
 

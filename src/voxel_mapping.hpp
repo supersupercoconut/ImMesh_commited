@@ -443,6 +443,7 @@ class Voxel_mapping
     void process_image(cv::Mat &temp_img, double msg_time);
     void image_cbk(const sensor_msgs::CompressedImageConstPtr &msg);    // 这里获取到的是压缩之后的图像
     void image_equalize(cv::Mat &img, int amp);
-    void start_point_colored_thread();
+//    void start_point_colored_thread();
+    void point_cloud_colored();
     //////////////////////////////////////////////////////////////////////////////////////////////////////
 };
