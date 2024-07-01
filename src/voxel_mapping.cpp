@@ -2235,59 +2235,70 @@ void Voxel_mapping::point_cloud_colored()
 {
     LOG(INFO) << "---- Staring the texture of point cloud ----" ;
     // 读取数据(先保证一帧一帧没有问题)
-//    while(ros::ok())
-//    {
-        while(g_rec_color_data_package_list.empty())
-        {
-            std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
+    while(ros::ok())
+    {
+        while (g_rec_color_data_package_list.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
 
-//        LOG(INFO) << "g_rec_color_data_package_list" << g_rec_color_data_package_list.size();
         g_mutex_all_data_package_lock.lock();
         auto data_temp = g_rec_color_data_package_list.front();
         g_rec_color_data_package_list.pop_front();
         g_mutex_all_data_package_lock.unlock();
 
         // 获取点云数据以及图像数据
-        pcl::PointCloud< pcl::PointXYZI >::Ptr offline_pts = data_temp.m_frame_pts;
+        pcl::PointCloud<pcl::PointXYZI>::Ptr offline_pts = data_temp.m_frame_pts;
         // 图像已经去畸变
         /// @bug 这里显示出来的图像是不是没有正确的去畸变
         cv::Mat img = data_temp.m_img;
 
-
         g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points | 但这个也不是最后u_f v_f离奇结果的原因
         g_map_rgb_pts_mesh.append_points_to_global_map(*offline_pts, 1, nullptr, 2);
-        LOG(INFO) << "m_voxels_recent_visited: " << g_map_rgb_pts_mesh.m_voxels_recent_visited.size() ;
+//        LOG(INFO) << "m_voxels_recent_visited: " << g_map_rgb_pts_mesh.m_voxels_recent_visited.size();
 
         Eigen::Matrix3d rot_i2w = data_temp.m_pose_q.toRotationMatrix();
         Eigen::Vector3d pos_i2w = data_temp.m_pose_t;
 
         /*** m_extR: l2i || m_camera_ext_R: c2l ***/
         Eigen::Matrix3d R_w2c;
-        R_w2c = rot_i2w * m_extR * m_camera_ext_R ;
+        R_w2c = rot_i2w * m_extR * m_camera_ext_R;
         Eigen::Vector3d t_w2c;
         t_w2c = rot_i2w * m_extR * m_camera_ext_t + m_extR * m_extT + pos_i2w;
 
-        std::shared_ptr< Image_frame > image_pose = std::make_shared< Image_frame >( g_cam_k );
-        image_pose->set_pose( eigen_q( R_w2c ), t_w2c );
+        std::shared_ptr<Image_frame> image_pose = std::make_shared<Image_frame>(g_cam_k);
+        image_pose->set_pose(eigen_q(R_w2c), t_w2c);
         image_pose->m_img = img;
         LOG(INFO) << "image_pose->m_img.rows" << image_pose->m_img.rows;
         image_pose->m_timestamp = ros::Time::now().toSec();
         image_pose->init_cubic_interpolation();
         image_pose->image_equalize();
 
-        std::vector< cv::Point2f >                pts_2d_vec;
-        std::vector< std::shared_ptr< RGB_pts > > rgb_pts_vec;
+        std::vector<cv::Point2f> pts_2d_vec;
+        std::vector<std::shared_ptr<RGB_pts> > rgb_pts_vec;
         // 这个函数中直接得到: rgb_pts_vec(3D点) pts_2d_vec(2D点)
         g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
 
-        for (const auto& point : pts_2d_vec) {
+        for (const auto &point: pts_2d_vec) {
             cv::circle(image_pose->m_img, point, 1, cv::Scalar(0, 255, 0), -1); // 绘制红色圆点
         }
 
-        // 显示图像
-        cv::imshow("Image with Points", image_pose->m_img);
-        cv::waitKey(0);
+        auto idx = data_temp.m_frame_idx;
+        /// @bug 这里在图像计算特征点的位置上面还是存在问题 | 即有些特征点的位置是超出这个图像区域 | 但是现在基本的投影过程已经完成了(投影点的分布与velodyne的点云分布基本一致)
+        //  cv::imwrite("/home/supercoconut/Myfile/immesh_ws/src/ImMesh/output/image"+std::to_string(idx) + ".png", image_pose->m_img);
+        //        cv::imshow("Image with Points", image_pose->m_img);
+        //        cv::waitKey(0);
+
+
+        /// @bug 1.这里对于recent_visited_voxel对应的部分暂时不上锁，因为只有一帧数据进行处理
+        std::unordered_set< std::shared_ptr< RGB_Voxel > >* recent_visited_voxel = &g_map_rgb_pts_mesh.m_voxels_recent_visited;
+
+        // 直接在这里进行点云渲染即可 | 图像信息 image_frame | 当前的投影点信息
+        LOG(INFO) << "recent_visited_voxel: " << recent_visited_voxel->size();
+        render_pts_in_voxels_mp(image_pose, recent_visited_voxel , image_pose->m_timestamp );
+
+
+
+    }
 
 }
 

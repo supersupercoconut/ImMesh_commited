@@ -648,76 +648,121 @@ extern double        g_maximum_pe_error;
 static inline double thread_render_pts_in_voxel( const int& pt_start, const int& pt_end, const std::shared_ptr< Image_frame >& img_ptr,
                                                  const std::vector< RGB_voxel_ptr >* voxels_for_render, const double obs_time )
 {
-    vec_3               pt_w;
-    vec_3               rgb_color;
-    double              u, v;
-    double              pt_cam_norm;
+    LOG(INFO) << "[thread_render_pts_in_voxel]: voxels_for_render size " << voxels_for_render->size();
+    vec_3 pt_w;
+    vec_3 rgb_color;
+    double u, v;
+    double pt_cam_norm;
     Common_tools::Timer tim;
     tim.tic();
-    vec_3  pt_radiance;
-    double allow_render_dis = std::max( 0.1, g_voxel_resolution * 0.2 );
-    for ( int voxel_idx = pt_start; voxel_idx < pt_end; voxel_idx++ )
+
+    for (int voxel_idx = pt_start; voxel_idx < pt_end; voxel_idx++)
     {
-        // continue;
-        RGB_voxel_ptr voxel_ptr = ( *voxels_for_render )[ voxel_idx ];
-        double        min_voxel_dis = 3e8;
-        // for ( int i = 0; i < voxel_ptr->m_pts_in_grid.size(); i++ )
-        // {
-        //     double pt_cam_dis = ( voxel_ptr->m_pts_in_grid[i]->get_pos() - img_ptr->m_pose_w2c_t ).dot( img_ptr->m_image_norm );
-        //     // double pt_cam_dis = ( voxel_ptr->m_pts_in_grid[i]->get_pos() - img_ptr->m_pose_w2c_t ).norm();
-        //     if ( pt_cam_dis < min_voxel_dis )
-        //     {
-        //         min_voxel_dis = pt_cam_dis;
-        //     }
-        // }
+        // voxel_ptr指向当前的voxel
+        RGB_voxel_ptr voxel_ptr = (*voxels_for_render)[ voxel_idx ];
+        // 这里获取到的数据为该体素中的所有点云
         for ( int pt_idx = 0; pt_idx < voxel_ptr->m_pts_in_grid.size(); pt_idx++ )
         {
-            pt_w = voxel_ptr->m_pts_in_grid[ pt_idx ]->get_pos();
-            vec_3  pt_cam_view_vector = pt_w - img_ptr->m_pose_w2c_t;
-            double view_dis = pt_cam_view_vector.norm();
-            double view_angle = acos( pt_cam_view_vector.dot( img_ptr->m_image_norm ) / ( view_dis + 0.0001 ) ) * 57.3;
-            view_angle = std::max( view_angle, 5.0 );
-            view_dis = std::max( view_dis, 1.0 );
-            if ( view_angle > 30 )
-            {
-                continue;
-            }
+            pt_w = voxel_ptr->m_pts_in_grid[pt_idx]->get_pos();
             if ( img_ptr->project_3d_point_in_this_img( pt_w, u, v, nullptr, 1.0 ) == false )
             {
                 continue;
             }
 
-            vec_3 obs_cov =
-                vec_3( image_obs_cov * view_dis * view_angle, image_obs_cov * view_dis * view_angle, image_obs_cov * view_dis * view_angle );
+            pt_cam_norm = ( pt_w - img_ptr->m_pose_w2c_t ).norm();
+            // double gray = img_ptr->get_grey_color(u, v, 0);
+            // pts_for_render[i]->update_gray(gray, pt_cam_norm);
+
+            // 在图像上获取点云的颜色信息 | 然后对这个voxel中的所有点云的颜色信息进行更新
             rgb_color = img_ptr->get_rgb( u, v, 0 );
-            if ( voxel_ptr->m_pts_in_grid[ pt_idx ]->update_rgb( rgb_color, view_dis, obs_cov, obs_time, img_ptr->m_image_inverse_exposure_time ) )
+
+            // int RGB_pts::update_rgb( const vec_3& rgb, const double obs_dis, const vec_3 obs_sigma, const double obs_time, const double current_exposure_time )
+            if (  voxel_ptr->m_pts_in_grid[pt_idx]->update_rgb(
+                    rgb_color, pt_cam_norm, vec_3( image_obs_cov, image_obs_cov, image_obs_cov ), obs_time ) )
             {
                 render_pts_count++;
-                if ( voxel_ptr->m_pts_in_grid[ pt_idx ]->get_rgb().maxCoeff() > 254 )
-                {
-                    continue;
-                }
-                pt_radiance = voxel_ptr->m_pts_in_grid[ pt_idx ]->get_radiance();
-                pt_radiance = ( pt_radiance / img_ptr->m_image_inverse_exposure_time );
-                if ( pt_radiance.maxCoeff() > 245.0 )
-                {
-                    continue;
-                }
-                // double brightness_err = fabs(rgb_color.mean() - pt_radiance.mean());
-                double brightness_err = fabs( rgb_color.norm() - pt_radiance.norm() );
-                if ( brightness_err > g_maximum_pe_error )
-                {
-                    brightness_err = g_maximum_pe_error;
-                    // continue;
-                }
-                img_ptr->m_acc_render_count++;
-                img_ptr->m_acc_photometric_error = img_ptr->m_acc_photometric_error + brightness_err;
-                // img_ptr->m_acc_photometric_error += std::atomic<double>((pt_color- rgb_color).norm());
             }
         }
     }
     double cost_time = tim.toc() * 100;
     return cost_time;
+//    LOG(INFO) << "[thread_render_pts_in_voxel]: voxels_for_render size " << voxels_for_render->size();
+//    vec_3               pt_w;
+//    vec_3               rgb_color;
+//    double              u, v;
+//    double              pt_cam_norm;
+//    Common_tools::Timer tim;
+//    tim.tic();
+//    vec_3  pt_radiance;
+//    double allow_render_dis = std::max( 0.1, g_voxel_resolution * 0.2 );
+//    for ( int voxel_idx = pt_start; voxel_idx < pt_end; voxel_idx++ )
+//    {
+//        // continue;
+////        LOG(INFO) << "For every voxel do the same process";
+//        RGB_voxel_ptr voxel_ptr = ( *voxels_for_render )[ voxel_idx ];
+//        double        min_voxel_dis = 3e8;
+//        // for ( int i = 0; i < voxel_ptr->m_pts_in_grid.size(); i++ )
+//        // {
+//        //     double pt_cam_dis = ( voxel_ptr->m_pts_in_grid[i]->get_pos() - img_ptr->m_pose_w2c_t ).dot( img_ptr->m_image_norm );
+//        //     // double pt_cam_dis = ( voxel_ptr->m_pts_in_grid[i]->get_pos() - img_ptr->m_pose_w2c_t ).norm();
+//        //     if ( pt_cam_dis < min_voxel_dis )
+//        //     {
+//        //         min_voxel_dis = pt_cam_dis;
+//        //     }
+//        // }
+//        LOG(INFO) << "voxel_idx: " << voxel_idx << " The point_cloud of this voxel is:" << voxel_ptr->m_pts_in_grid.size() ;
+//        for ( int pt_idx = 0; pt_idx < voxel_ptr->m_pts_in_grid.size(); pt_idx++ )
+//        {
+//
+//            pt_w = voxel_ptr->m_pts_in_grid[ pt_idx ]->get_pos();
+//            vec_3  pt_cam_view_vector = pt_w - img_ptr->m_pose_w2c_t;
+//            double view_dis = pt_cam_view_vector.norm();
+//            double view_angle = acos( pt_cam_view_vector.dot( img_ptr->m_image_norm ) / ( view_dis + 0.0001 ) ) * 57.3;
+//            view_angle = std::max( view_angle, 5.0 );
+//            view_dis = std::max( view_dis, 1.0 );
+//            if ( view_angle > 30 )
+//            {
+//                continue;
+//            }
+//            if ( img_ptr->project_3d_point_in_this_img( pt_w, u, v, nullptr, 1.0 ) == false )
+//            {
+//                continue;
+//            }
+//
+//            vec_3 obs_cov =
+//                vec_3( image_obs_cov * view_dis * view_angle, image_obs_cov * view_dis * view_angle, image_obs_cov * view_dis * view_angle );
+//            rgb_color = img_ptr->get_rgb( u, v, 0 );
+//            if ( voxel_ptr->m_pts_in_grid[ pt_idx ]->update_rgb( rgb_color, view_dis, obs_cov, obs_time, img_ptr->m_image_inverse_exposure_time ) )
+//            {
+//                render_pts_count++;
+//                if ( voxel_ptr->m_pts_in_grid[ pt_idx ]->get_rgb().maxCoeff() > 254 )
+//                {
+//                    continue;
+//                }
+//                pt_radiance = voxel_ptr->m_pts_in_grid[ pt_idx ]->get_radiance();
+//                pt_radiance = ( pt_radiance / img_ptr->m_image_inverse_exposure_time );
+//                if ( pt_radiance.maxCoeff() > 245.0 )
+//                {
+//                    continue;
+//                }
+//                // double brightness_err = fabs(rgb_color.mean() - pt_radiance.mean());
+//                double brightness_err = fabs( rgb_color.norm() - pt_radiance.norm() );
+//                if ( brightness_err > g_maximum_pe_error )
+//                {
+//                    brightness_err = g_maximum_pe_error;
+//                    // continue;
+//                }
+//
+//
+//                img_ptr->m_acc_render_count++;
+//                img_ptr->m_acc_photometric_error = img_ptr->m_acc_photometric_error + brightness_err;
+//                // img_ptr->m_acc_photometric_error += std::atomic<double>((pt_color- rgb_color).norm());
+//            }
+//        }
+//
+//    }
+//    double cost_time = tim.toc() * 100;
+//    return cost_time;
 }
 
 std::vector< RGB_voxel_ptr > g_voxel_for_render;
@@ -725,23 +770,33 @@ FILE*                        photometric_fp = nullptr;
 void render_pts_in_voxels_mp( std::shared_ptr< Image_frame >& img_ptr, std::unordered_set< RGB_voxel_ptr >* _voxels_for_render,
                               const double& obs_time )
 {
+    LOG(INFO) << "---- starting the rendering process ----";
+
     Common_tools::Timer tim;
+
     g_voxel_for_render.clear();
     for ( Voxel_set_iterator it = ( *_voxels_for_render ).begin(); it != ( *_voxels_for_render ).end(); it++ )
     {
         g_voxel_for_render.push_back( *it );
     }
+
     std::vector< std::future< double > > results;
     tim.tic( "Render_mp" );
     int numbers_of_voxels = g_voxel_for_render.size();
-    g_cost_time_logger.record( "Pts_num", numbers_of_voxels );
+//    g_cost_time_logger.record( "Pts_num", numbers_of_voxels );    // 源程序的代码在这里出现了问题(但是一个 record 的函数应该是无关紧要的部分才对)
     render_pts_count = 0;
     img_ptr->m_acc_render_count = 0;
     img_ptr->m_acc_photometric_error = 0;
+    LOG(INFO) << "USING_OPENCV_TBB: " << USING_OPENCV_TBB;
+
     if ( USING_OPENCV_TBB )
     {
-        cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
-                           [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, img_ptr, &g_voxel_for_render, obs_time ); } );
+        LOG(INFO) << "prepare multi-thread to process the rendering work";
+//        cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
+//                           [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, img_ptr, &g_voxel_for_render, obs_time ); } );
+
+        /// @bug 这里程序在运行最后一帧的时候出现错误 | 而且是无论数入的numbers_of_voxels数量是多少，这里都是在最后一帧的部分出现错误
+        thread_render_pts_in_voxel(0, numbers_of_voxels , img_ptr, &g_voxel_for_render, obs_time);
     }
     else
     {
@@ -839,8 +894,8 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
 
     if ( ( !use_all_pts ) && boxes_recent_hitted.size() )
     {
+        LOG(INFO) << "Get voxel points to projection";
         m_mutex_rgb_pts_in_recent_hitted_boxes->lock();
-
         for ( Voxel_set_iterator it = boxes_recent_hitted.begin(); it != boxes_recent_hitted.end(); it++ )
         {
             // pts_for_projection.push_back( (*it)->m_pts_in_grid.back() );
@@ -855,12 +910,11 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
     }
     else
     {
+        LOG(INFO) << "Get all points to projection";
         pts_for_projection = m_rgb_pts_vec;             // m_rgb_pts_vec 为当前Global_map中的所有特征点
     }
 
     int pts_size = pts_for_projection.size();
-
-
     // 定义一个 point_cloud 来处理数据 主要作用是将能投影的点云进行可视化(用于debug的操作)
     //    pcl::PointCloud<pcl::PointXYZINormal>::Ptr my_pts_projection(new pcl::PointCloud<pcl::PointXYZINormal>);
     //    my_pts_projection->clear();
@@ -869,7 +923,6 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
     {
         vec_3  pt = pts_for_projection[ pt_idx ]->get_pos();
         double depth = ( pt - image_pose->m_pose_w2c_t ).norm();
-//        LOG(INFO) << " depth: " << depth ;
         if ( depth > m_maximum_depth_for_projection )
         {
             continue;
@@ -907,8 +960,10 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
             }
             mask_index.m_map_2d_hash_map[ u ][ v ] = ( int ) pt_idx;
             mask_depth.m_map_2d_hash_map[ u ][ v ] = ( float ) depth;
-            map_idx_draw_center[ pt_idx ] = cv::Point2f( v, u );
+            /// @bug 为什么这里 map_idx_draw_center与map_idx_draw_center_raw_pose上面的u,v坐标不一样 | 不过这里都是临时变量更改之后问题不大
+            map_idx_draw_center[ pt_idx ] = cv::Point2f( u, v );
             map_idx_draw_center_raw_pose[ pt_idx ] = cv::Point2f( u_f, v_f );
+
         }
     }
 
@@ -934,13 +989,14 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
         for ( auto it = map_idx_draw_center.begin(); it != map_idx_draw_center.end(); it++ )
         {
 //            pc_2d_out_vec->push_back( map_idx_draw_center_raw_pose[ it->first ] );
-            pc_2d_out_vec->push_back(map_idx_draw_center[it->first] );
+            pc_2d_out_vec->push_back(map_idx_draw_center[it->first] ); // 这里获取到的投影位置可能比比较好看一些
         }
     }
 
-    LOG(INFO) << "pc_2d_out_vec: " << pc_2d_out_vec->size();
-    LOG(INFO) << "pc_out_vec: " << pc_out_vec->size();
-    LOG(INFO) << "[selection_points_for_projection]" << "add points: " << acc <<"replace points: " << blk_rej;
+//    LOG(INFO) << "pc_2d_out_vec: " << pc_2d_out_vec->size();
+//    LOG(INFO) << "pc_out_vec: " << pc_out_vec->size();
+    LOG(INFO) << "[selection_points_for_projection] " << "add points: " << acc <<" replace points: " << blk_rej;
+
 }
 
 void Global_map::save_to_pcd( std::string dir_name, std::string _file_name, int save_pts_with_views )
