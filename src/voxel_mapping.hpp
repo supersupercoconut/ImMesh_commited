@@ -133,7 +133,7 @@ class Voxel_mapping
     // mutex mtx_buffer_pointcloud;
 
     string m_root_dir = ROOT_DIR;
-    string m_map_file_path, m_lid_topic = "/livox/lidar", m_imu_topic = "/livox/imu", m_hilti_seq_name = "01", m_config_file;
+    string m_map_file_path, m_lid_topic = "/velodyne_points", m_imu_topic = "/livox/imu", m_hilti_seq_name = "01", m_config_file;
     M3D    Eye3d = M3D::Identity();
     M3F    Eye3f = M3F::Identity();
     V3D    Zero3d = V3D::Zero();

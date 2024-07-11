@@ -59,6 +59,20 @@ Dr. Fu Zhang < fuzhang@hku.hk >.
 #include "triangle.hpp"
 #include "ikd_Tree.h"
 // #include "assert.h"
+
+#include <nav_msgs/Odometry.h>
+#include <nav_msgs/Path.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <geometry_msgs/Vector3.h>
+
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/io/pcd_io.h>
+
+
 #define R3LIVE_MAP_MAJOR_VERSION 1
 #define R3LIVE_MAP_MINOR_VERSION 0
 #define IF_DBG_COLOR 0
@@ -147,8 +161,8 @@ class RGB_pts
     mat_3_3        get_rgb_cov();
     pcl::PointXYZI get_pt();
     // void update_gray( const double gray, double obs_dis = 1.0 );
-    int update_rgb( const vec_3 &rgb, const double obs_dis, const vec_3 obs_sigma, const double obs_time, const double current_exposure_time );
-
+//    int update_rgb( const vec_3 &rgb, const double obs_dis, const vec_3 obs_sigma, const double obs_time, const double current_exposure_time );
+    int update_rgb(const vec_3 &rgb, const double obs_dis, const vec_3 obs_sigma, const double obs_time);
   private:
     friend class boost::serialization::access;
     template < typename Archive >
@@ -307,7 +321,7 @@ struct Global_map
 
     void init_ros_node();
     void read_ros_parameters(ros::NodeHandle &nh);
-
+    void service_pub_rgb_maps();
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   private:

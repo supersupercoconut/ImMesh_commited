@@ -916,6 +916,7 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
 
     /////////////////// 补充 /////////////////////////
     LOG(INFO) << "Loading camera parameter";
+    m_lid_topic = "/velodyne_points";
     nh.param<string>("image/image_topic", m_img_topic, "/camera/color/image_raw/compressed" );
     nh.param< int >( "img_used", m_img_en, 1 );
 

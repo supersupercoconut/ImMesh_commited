@@ -10,6 +10,8 @@ M3D Lidar_R_wrt_IMU = M3D::Identity();
 //void point_cloud_colored();
 double g_data_id = 0;
 std::unique_ptr<std::thread> g_color_point_thr = nullptr;
+std::unique_ptr<std::thread> g_pub_thr = nullptr;
+int flag = 0;    // 用于直接指定pub线程是不是发布数据
 std::mutex                                            g_mutex_all_data_package_lock;
 std::list< Point_clouds_color_data_package >          g_rec_color_data_package_list;
 /////////////////////////////////////////////////
@@ -1770,10 +1772,12 @@ int Voxel_mapping::service_LiDAR_update()
     bool      status = ros::ok();
 
     /// @bug 这个部分不能卸载while()循环中,一个线程不能在while()里面被频繁地使用以及销毁 | g_color_point_thr作为全局变量控制整个线程
-    if( g_color_point_thr == nullptr )
-    {
-        g_color_point_thr = std::make_unique<std::thread>(&Voxel_mapping::point_cloud_colored, this);     // unique_ptr 对应的 thread , 不需要delete
-    }
+//    if( g_color_point_thr == nullptr )
+//    {
+//        // 新建线程使用r3live/r3live++中提供的点云信息 | 点云地图还是使用Global map中的实现 对其camera信息看r3live的方法
+//        g_color_point_thr = std::make_unique<std::thread>(&Voxel_mapping::point_cloud_colored, this);     // unique_ptr 对应的 thread , 不需要delete
+//    }
+
 
     // 整个lidar数据处理的核心
     while ( ( status = ros::ok() ) )
@@ -2233,14 +2237,16 @@ void Voxel_mapping::laserCloudVoxelHandler(const ImMesh::cloud_voxelConstPtr &ms
 /// @attention 这里是新开启了一个线程进行数据处理 | 并且在实际使用的时候关闭了GUI显示部分(为了关闭GUI 我注释掉了main函数中所有与GUI显示有关的部分，以及全部变量GL_camera g_gl_camera 还注释掉了一个完整的文件 mesh_rec_display.cpp)
 void Voxel_mapping::point_cloud_colored()
 {
+
     LOG(INFO) << "---- Staring the texture of point cloud ----" ;
-    // 读取数据(先保证一帧一帧没有问题)
     while(ros::ok())
     {
+
         while (g_rec_color_data_package_list.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
 
+//        LOG(INFO) << "Processing the g_rec_color_data_package_list for point_cloud colored";
         g_mutex_all_data_package_lock.lock();
         auto data_temp = g_rec_color_data_package_list.front();
         g_rec_color_data_package_list.pop_front();
@@ -2248,12 +2254,10 @@ void Voxel_mapping::point_cloud_colored()
 
         // 获取点云数据以及图像数据
         pcl::PointCloud<pcl::PointXYZI>::Ptr offline_pts = data_temp.m_frame_pts;
-        // 图像已经去畸变
-        /// @bug 这里显示出来的图像是不是没有正确的去畸变
         cv::Mat img = data_temp.m_img;
 
-        g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points | 但这个也不是最后u_f v_f离奇结果的原因
-        g_map_rgb_pts_mesh.append_points_to_global_map(*offline_pts, 1, nullptr, 2);
+        g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points
+        g_map_rgb_pts_mesh.append_points_to_global_map(*offline_pts, 1, nullptr, 2);    // r3live本身这里是怎么将全局点云数入到全局地图中？
 //        LOG(INFO) << "m_voxels_recent_visited: " << g_map_rgb_pts_mesh.m_voxels_recent_visited.size();
 
         Eigen::Matrix3d rot_i2w = data_temp.m_pose_q.toRotationMatrix();
@@ -2268,7 +2272,7 @@ void Voxel_mapping::point_cloud_colored()
         std::shared_ptr<Image_frame> image_pose = std::make_shared<Image_frame>(g_cam_k);
         image_pose->set_pose(eigen_q(R_w2c), t_w2c);
         image_pose->m_img = img;
-        LOG(INFO) << "image_pose->m_img.rows" << image_pose->m_img.rows;
+//        LOG(INFO) << "image_pose->m_img.rows" << image_pose->m_img.rows;
         image_pose->m_timestamp = ros::Time::now().toSec();
         image_pose->init_cubic_interpolation();
         image_pose->image_equalize();
@@ -2288,15 +2292,20 @@ void Voxel_mapping::point_cloud_colored()
         //        cv::imshow("Image with Points", image_pose->m_img);
         //        cv::waitKey(0);
 
-
-        /// @bug 1.这里对于recent_visited_voxel对应的部分暂时不上锁，因为只有一帧数据进行处理
+        /// @bug 这里对于recent_visited_voxel对应的部分暂时不上锁，因为只有一帧数据进行处理
         std::unordered_set< std::shared_ptr< RGB_Voxel > >* recent_visited_voxel = &g_map_rgb_pts_mesh.m_voxels_recent_visited;
 
         // 直接在这里进行点云渲染即可 | 图像信息 image_frame | 当前的投影点信息
-        LOG(INFO) << "recent_visited_voxel: " << recent_visited_voxel->size();
+//        LOG(INFO) << "recent_visited_voxel: " << recent_visited_voxel->size();
         render_pts_in_voxels_mp(image_pose, recent_visited_voxel , image_pose->m_timestamp );
+        g_map_rgb_pts_mesh.m_last_updated_frame_idx++;        // 设置一个id
 
-
+        if( g_pub_thr == nullptr  && flag == 0 )
+        {
+            /// @bug 本身是想按照r3live形式将点云进行发布, 但这里的点发布其器存在一定问题
+            g_pub_thr = std::make_unique<std::thread>(&Global_map::service_pub_rgb_maps, &g_map_rgb_pts_mesh);
+            flag = 1;  // 因为创建线程写在了while()循环中, 为了避免线程的重复创建，这里设置flag
+        }
 
     }
 

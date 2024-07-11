@@ -61,7 +61,7 @@ double minimum_pts = 0.1 * threshold_scale;
 double g_meshing_voxel_size = 0.4 * threshold_scale;
 
 // 设置 openGL 中的相机视图
-//GL_camera g_gl_camera;
+GL_camera g_gl_camera;
 
 bool                        g_if_automatic_save_mesh = false;
 float                       g_alpha = 1.0;
@@ -123,8 +123,6 @@ Voxel_mapping voxel_mapping;
 //extern std::list< Point_clouds_color_data_package >          g_rec_color_data_package_list;
 
 
-
-
 void print_help_window( bool *if_display_help_win )
 {
     ImGui::Begin( "--- Help ---", if_display_help_win );
@@ -182,120 +180,6 @@ void get_last_avr_pose( int current_frame_idx, Eigen::Quaterniond &q_avr, vec_3 
     q_avr = q_avr * Eigen::Quaterniond( lidar_frame_to_camera_frame );
 }
 
-/// @attention 这里是新开启了一个线程进行数据处理 | 并且在实际使用的时候关闭了GUI显示部分(为了关闭GUI 我注释掉了main函数中所有与GUI显示有关的部分，以及全部变量GL_camera g_gl_camera 还注释掉了一个完整的文件 mesh_rec_display.cpp)
-void point_cloud_colored_try()
-{
-    LOG(INFO) << "---- Staring the texture of point cloud ----" ;
-    // 读取相机参数(内外参)
-    g_map_rgb_pts_mesh.init_ros_node();
-
-    // 获取点云数据
-    pcl::PointCloud< pcl::PointXYZI > offline_pts;
-    LOG(INFO) << "Input the point_cloud and camera data";
-    fflush( stdout );       // C中的操作 | 刷新缓冲区，并且数据全部输出出来
-    pcl::io::loadPCDFile( "/home/supercoconut/Myfile/datasets/m2DGR/output/pointcloud_20.pcd", offline_pts );
-
-    g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points | 但这个也不是最后u_f v_f离奇结果的原因
-    LOG(INFO) << "The size of pts = " << offline_pts.points.size();
-    LOG(INFO) << "g_map_rgb_pts_mesh.m_minimum_pts_size = " << g_map_rgb_pts_mesh.m_minimum_pts_size;
-
-
-    // 因为这里只输入一帧数据，所以这里定义为1 | 随便定义点云跳转的数据为4
-    g_map_rgb_pts_mesh.append_points_to_global_map( offline_pts, 1, nullptr, 1 );
-
-    // 获取图像数据与点云数据(在global_Map中保留一个Image_frame的变量或者buffer即可)
-
-    // 知道哪些voxel需要被处理(这个数据会跟临时定义的voxels_recent_visited变量进行数据互换，所以没有显示地让整个数据清空的操作)
-    std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited = g_map_rgb_pts_mesh.m_voxels_recent_visited;
-    LOG(INFO) << "The size of voxels_recent_visited is: "<< g_map_rgb_pts_mesh.m_voxels_recent_visited.size();
-
-    // 获取用于投影点
-    std::vector<std::shared_ptr<RGB_pts>> pts_for_projection;
-    for(auto i = voxels_recent_visited.begin(); i!= voxels_recent_visited.end(); i++)
-    {
-        if ( ( *i )->m_pts_in_grid.size() )
-            pts_for_projection.push_back( (*i)->m_pts_in_grid.back() );
-    }
-
-    /// @bug 这个点的数量好像与在加入线程中的数量不太一样(但至少是加入进来了)
-    LOG(INFO) << "The total points in pts_for_projection : "<< pts_for_projection.size();
-
-    Hash_map_2d<int, int> mask_index;
-    Hash_map_2d<int, float> mask_depth;
-
-    // 后面这部分的变量只是存储数据的部分
-    std::map<int, cv::Point2f> map_idx_draw_center;
-    std::map<int, cv::Point2f> map_idx_draw_center_raw_pose;
-
-    // 获取图像信息 | 需要设置 坐标系转换 + 内参信息 | 已知camera到lidar的旋转矩阵 (lidar系与world系同步)
-//    cv::Mat temp_img = cv::imread("/home/supercoconut/Myfile/datasets/R3LIVE/hku_park_01/output/image_2.png", cv::IMREAD_COLOR);
-    cv::Mat temp_img = cv::imread("/home/supercoconut/Myfile/datasets/m2DGR/output/image_20.jpg", cv::IMREAD_COLOR);
-    LOG(INFO) << " temp_img.cols: " << temp_img.cols << "temp_img.rows: " << temp_img.rows;
-
-    Eigen::Matrix3d g_cam_K;
-    g_cam_K <<  617.971050917033,0.0,327.710279392468,
-                0.0, 616.445131524790, 253.976983707814,
-                0.0, 0.0, 1;
-//    g_cam_K << 863.4241, 0.0, 640.6808,
-//            0.0,  863.4171, 518.3392,
-//            0.0, 0.0, 1.0;
-    Eigen::Matrix<double, 5, 1> g_cam_dist;
-
-    std::vector< double > camera_dist_data = {0.148000794688248,-0.217835187249065,0,0,0};
-//    std::vector< double > camera_dist_data = {-0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
-    Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( camera_dist_data.data() );
-    g_cam_dist = Eigen::Map< Eigen::Matrix< double, 5, 1 > >( m_camera_dist_coeffs.data() );
-    cv::Mat intrinsic, dist_coeffs;
-    cv::eigen2cv( g_cam_K, intrinsic );
-    cv::eigen2cv( g_cam_dist, dist_coeffs );
-    LOG(INFO) << "intrinsic " << intrinsic.size;
-    LOG(INFO) << "dist_coeffs " << dist_coeffs.size;
-    cv::Mat m_ud_map1, m_ud_map2;
-
-    // 生成畸变映射表
-    initUndistortRectifyMap( intrinsic, dist_coeffs, cv::Mat(), intrinsic, cv::Size( temp_img.cols, temp_img.rows ),
-                             CV_16SC2, m_ud_map1, m_ud_map2 );
-
-    std::shared_ptr< Image_frame > image_pose = std::make_shared< Image_frame >( g_cam_K );
-    cv::remap( temp_img, image_pose->m_img, m_ud_map1, m_ud_map2, cv::INTER_LINEAR );
-    LOG(INFO) << "image_pose->m_img.rows" << image_pose->m_img.rows;
-
-    image_pose->m_timestamp = ros::Time::now().toSec();
-    image_pose->init_cubic_interpolation();
-    image_pose->image_equalize();
-    LOG(INFO) << "m_img_gray" << image_pose->m_img_gray.size;
-
-    mat_3_3 R_w2c;
-    R_w2c <<  0, 0, 1,
-                -1, 0, 0,
-                0, -1, 0;
-    vec_3 pose_t(0.30456, 0.00065, 0.65376);
-//    R_w2c << -0.00113207, -0.0158688, 0.999873,
-//            -0.9999999,  -0.000486594, -0.00113994,
-//            0.000504622,  -0.999874,  -0.0158682;
-//    vec_3 pose_t(0.0, 0.0, 0.0);
-    image_pose->set_pose( eigen_q( R_w2c ), pose_t );
-
-
-    std::vector< cv::Point2f >                pts_2d_vec;
-    std::vector< std::shared_ptr< RGB_pts > > rgb_pts_vec;
-    // 这个函数中直接得到: rgb_pts_vec(3D点) pts_2d_vec(2D点)
-    g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
-
-
-    for (const auto& point : pts_2d_vec) {
-        cv::circle(image_pose->m_img, point, 1, cv::Scalar(0, 255, 0), -1); // 绘制红色圆点
-    }
-
-    // 显示图像
-    cv::imshow("Image with Points", image_pose->m_img);
-    cv::waitKey(0);
-
-
-}
-
-
-
 
 int main( int argc, char **argv )
 {
@@ -311,45 +195,22 @@ int main( int argc, char **argv )
     ros::init( argc, argv, "laserMapping" );
     voxel_mapping.init_ros_node();  // 初始化ros节点
     LOG(INFO)<<"------Starting laserMapping node------";
-//    GLFWwindow *window = g_gl_camera.init_openGL_and_ImGUI( "ImMesh: An Immediate LiDAR Localization and Meshing Framework", 1, voxel_mapping.m_GUI_font_size );
-//    // 只需要知道glad对应的openGL中的一些基本功能即可
-//    if ( !gladLoadGLLoader( ( GLADloadproc ) glfwGetProcAddress ) )
-//    {
-//        std::cout << "Failed to initialize GLAD" << std::endl;
-//        return -1;
-//    }
+    GLFWwindow *window = g_gl_camera.init_openGL_and_ImGUI( "ImMesh: An Immediate LiDAR Localization and Meshing Framework", 1, voxel_mapping.m_GUI_font_size );
+    // 只需要知道glad对应的openGL中的一些基本功能即可
+    if ( !gladLoadGLLoader( ( GLADloadproc ) glfwGetProcAddress ) )
+    {
+        std::cout << "Failed to initialize GLAD" << std::endl;
+        return -1;
+    }
 
     //  shader 着色器 -> 应该是方便gui可视化(用在openGL部分)
-//    Common_tools::Point_cloud_shader  g_pt_shader;
-//    init_openGL_shader();
-//    if ( window == nullptr )
-//    {
-//        cout << "Window == nullptr" << endl;
-//        return 0;
-//    }
-
-    // 判断是否启动mesh重建(无论是不是offline的方式，都会使用这种方法)
-//    g_enable_mesh_rec = voxel_mapping.m_if_enable_mesh_rec;
-//    cout << "Offline point cloud name: " << ANSI_COLOR_GREEN_BOLD << voxel_mapping.m_pointcloud_file_name << ANSI_COLOR_RESET << endl;
-
-
-    // if + elseif 判断是否存在着 pcd文件 用于重建 | 两者都不符合条件就走else的部分
-//    if ( Common_tools::if_file_exist( voxel_mapping.m_pointcloud_file_name ) )
-//    {
-//        pcl::PointCloud< pcl::PointXYZI > offline_pts;
-//        cout << "Loading data..." ;
-//        fflush( stdout );       // C中的操作 | 刷新缓冲区，并且数据全部输出出来
-//        pcl::io::loadPCDFile( voxel_mapping.m_pointcloud_file_name, offline_pts );
-//        cout << " total of pts = " << offline_pts.points.size() << endl;
-//        cout << "g_map_rgb_pts_mesh.m_minimum_pts_size = " << g_map_rgb_pts_mesh.m_minimum_pts_size << endl;
-//        reconstruct_mesh_from_pointcloud( offline_pts.makeShared() );
-//    }
-//    else if(voxel_mapping.m_pointcloud_file_name.length() > 5)
-//    {
-//        cout << ANSI_COLOR_RED_BOLD << "Offline point cloud file: " << voxel_mapping.m_pointcloud_file_name <<" NOT exist!!!, Please check!!!" << ANSI_COLOR_RESET << endl;
-//        while(1);
-//    }
-
+    Common_tools::Point_cloud_shader  g_pt_shader;
+    init_openGL_shader();
+    if ( window == nullptr )
+    {
+        cout << "Window == nullptr" << endl;
+        return 0;
+    }
 
     cout << "====Loading parameter=====" << endl;
 
@@ -379,282 +240,276 @@ int main( int argc, char **argv )
 
     /// @attention 这里在新建线程的时候 —— std::thread() 中第一个参数是线程中调用的函数 | 之后输入的参数应该是这个函数中对应的形参 | 如果要调用类中的成员函数，第二个参数应该是类的实例化对象
     // 新建两个线程 | thr_mapping 用于更新地图(估计也包含了mesh的生成,注释掉下一个线程估计只是没有办法进行可视化) | thr 用于刷新和同步三角形 )
-//    std::thread thr_mapping = std::thread( &Voxel_mapping::service_LiDAR_update, &voxel_mapping );
-//    std::thread thr_mapping = std::thread( &Voxel_mapping::service_lvisam_odometry, &voxel_mapping );
-//    std::thread thr = std::thread( service_refresh_and_synchronize_triangle, 100 );   // 注释之后，整个系统中没有方法进行mesh图生成 | rviz里面还是会生成点云地图
-
-
-    // 这里估计是等待一段时间，方便另外两个线程初始化
-
-
-    // 里程计信息正常work(关闭了对应的Mesh重建部分)
     std::thread thr_mapping = std::thread( &Voxel_mapping::service_LiDAR_update, &voxel_mapping );
-    // 新建线程使用r3live/r3live++中提供的点云信息 | 点云地图还是使用Global map中的实现 对其camera信息看r3live的方法
-//    std::thread thr_mapping = std::thread(point_cloud_colored_try);
+//    std::thread thr_mapping = std::thread( &Voxel_mapping::service_lvisam_odometry, &voxel_mapping );
+    std::thread thr = std::thread( service_refresh_and_synchronize_triangle, 100 );   // 注释之后，整个系统中没有方法进行mesh图生成 | rviz里面还是会生成点云地图
+    // 里程计信息正常work(关闭了对应的Mesh重建部分)
+//    std::thread thr_mapping = std::thread( &Voxel_mapping::service_LiDAR_update, &voxel_mapping );
     std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
 
-//    Common_tools::Timer disp_tim;
-//
-//    g_flag_pause = false;
+    Common_tools::Timer disp_tim;
 
-//    std::string gl_camera_file_name = Common_tools::get_home_folder().append( "/ImMeshing.gl_camera" );
-//    g_gl_camera.load_camera( gl_camera_file_name );
-//    g_gl_camera.m_gl_cam.m_camera_z_far = 1500;
-//    g_gl_camera.m_gl_cam.m_camera_z_near = 0.1;
+    g_flag_pause = false;
 
-    // Rasterization configuration ( openGL能够之间生成相机视图 —— 这里对应的可能就是一个直接输出的深度相机图 )
-//    Cam_view m_depth_view_camera;
-//    m_depth_view_camera.m_display_w = 640;
-//    m_depth_view_camera.m_display_h = 480;
-//    m_depth_view_camera.m_camera_focus = 400;
-//    m_depth_view_camera.m_maximum_disp_depth = 150.0;
-//    m_depth_view_camera.m_draw_depth_pts_size = 2;
-//    m_depth_view_camera.m_draw_LiDAR_pts_size = m_depth_view_camera.m_draw_depth_pts_size;
-//    m_depth_view_camera.m_if_draw_depth_pts = true;
-//    vec_3 ext_rot_angle = vec_3( 0, 0, 0 );
+    std::string gl_camera_file_name = Common_tools::get_home_folder().append( "/ImMeshing.gl_camera" );
+    g_gl_camera.load_camera( gl_camera_file_name );
+    g_gl_camera.m_gl_cam.m_camera_z_far = 1500;
+    g_gl_camera.m_gl_cam.m_camera_z_near = 0.1;
 
-    // 剩余只与 openGL 显示结果相关
-//    while ( !glfwWindowShouldClose( window ) )
-//    {
-//        g_gl_camera.draw_frame_start();
-//
-//        Eigen::Quaterniond q_last_avr;
-//        vec_3              t_last_avr;
-//        get_last_avr_pose( g_current_frame, q_last_avr, t_last_avr );
-//        if ( g_if_draw_depth )
-//        {
-//            Common_tools::Timer tim;
-//            tim.tic();
-//            m_depth_view_camera.m_camera_z_far = g_gl_camera.m_gl_cam.m_camera_z_far;
-//            m_depth_view_camera.m_camera_z_near = g_gl_camera.m_gl_cam.m_camera_z_near;
-//
-//            if ( g_if_depth_bind_cam )
-//                m_depth_view_camera.set_camera_pose( q_last_avr.toRotationMatrix(), t_last_avr );
-//            else
-//                m_depth_view_camera.set_camera_pose( g_gl_camera.m_gl_cam.m_camera_rot, g_gl_camera.m_gl_cam.m_camera_pos );
-//
-//            m_depth_view_camera.set_gl_matrix();
-//
-//            draw_triangle( m_depth_view_camera );
-//
-//            m_depth_view_camera.read_depth();
-//            glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-//            m_depth_view_camera.draw_depth_image();
-//            g_gl_camera.set_gl_camera_pose_matrix();
-//            if(m_depth_view_camera.m_if_draw_depth_pts)
-//            {
-//                g_draw_LiDAR_point = true;
-//            }
-//        }
-//
-//        if ( g_display_main_window )
-//        {
-//            ImGui::Begin( "ImMesh's Main_windows", &g_display_main_window );               // Create a window called "Hello, world!" and append into it.
-//            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.75f), "ImMesh: An Immediate LiDAR Localization and Meshing Framework");
-//            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.75f), "Github:  ");
-//            ImGui::SameLine();
-//            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "https://github.com/hku-mars/ImMesh");
-//            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.75f), "Author:  ");
-//            ImGui::SameLine();
-//            ImGui::TextColored(ImVec4(0.5f, 0.5f, 1.0f, 1.0f), "Jiarong Lin & Chongjian Yuan");
-//            if (ImGui::TreeNode("Help"))
-//            {
-//                ImGui::Text( "[H]    | Display/Close main windows" );
-//                ImGui::Text( "[C]    | Show/Close camera pose windows" );
-//                ImGui::Text( "[T]    | Follow the camera" );
-//                ImGui::Text( "[D]    | Show/close the depth image" );
-//                ImGui::Text( "[L]    | Show/close the LiDAR points" );
-//                ImGui::Text( "[M]    | Show/close the mesh" );
-//                ImGui::Text( "[S]    | Save camera view" );
-//                ImGui::Text( "[Z]    | Load camera view" );
-//                ImGui::Text( "[+/-]  | Increase/Decrease the line width" );
-//                ImGui::Text( "[F1]   | Display help window" );
-//                ImGui::Text( "[Space]| To pause the program" );
-//                ImGui::Text( "[Esc]  | Exit the program" );
-//                ImGui::TreePop();
-//                ImGui::Separator();
-//            }
-//            ImGui::SetNextItemOpen(true, 1);
-//            // ImGui::SetNextTreeNodeOpen();
-//            if (ImGui::TreeNode("Draw Online reconstructed mesh options:"))
-//            {
-//                ImGui::RadioButton("Draw mesh's Facet", &g_display_face, 1);
-//                ImGui::RadioButton("Draw mesh's Wireframe", &g_display_face, 0);
-//                if(ImGui::Checkbox( "Draw mesh with color", &g_mesh_if_color ))
-//                {
-//                    g_force_refresh_triangle = true;
-//                }
-//                ImGui::TreePop();
-//                ImGui::Separator();
-//            }
-//            if (ImGui::TreeNode("LiDAR pointcloud reinforcement"))
-//            {
-//                ImGui::Checkbox( "Enable", &g_if_draw_depth );
-//                if(g_if_draw_depth)
-//                {
-//                    ImGui::Checkbox( "If depth in sensor frame", &g_if_depth_bind_cam );
-//                }
-//                ImGui::SliderInt( "Reinforced point size", &m_depth_view_camera.m_draw_depth_pts_size, 0, 10 );
-//                ImGui::SliderInt( "LiDAR point size", &m_depth_view_camera.m_draw_LiDAR_pts_size, 0, 10 );
-//                ImGui::TreePop();
-//                ImGui::Separator();
-//            }
-//            ImGui::Checkbox( "Move follow camera", &g_follow_cam );
-//            ImGui::Checkbox( "Mapping pause", &g_flag_pause );
-//            ImGui::Checkbox( "Draw LiDAR point", &g_draw_LiDAR_point );
-//            if(g_draw_LiDAR_point)
-//            {
-//                ImGui::SliderInt( "LiDAR point size", & m_depth_view_camera.m_draw_LiDAR_pts_size, 0, 10 );
-//            }
-//            ImGui::Checkbox( "Axis and Z_plane", &g_if_draw_z_plane );
-//
-//            ImGui::SliderFloat( "Path width", &g_draw_path_size, 1.0, 10.0f );
-//            ImGui::SliderFloat( "Camera size", &g_display_camera_size, 0.01, 10.0, "%lf", ImGuiSliderFlags_Logarithmic );
-//
-//            if ( ImGui::Button( "  Save Mesh to PLY file  " ) )
-//            {
-//                int temp_flag = g_flag_pause;
-//                g_flag_pause = true;
-//                Common_tools::create_dir( data_path_file );
-//                save_to_ply_file( std::string( data_path_file ).append( "/rec_mesh.ply" ), g_ply_smooth_factor, g_ply_smooth_k );
-//                g_flag_pause = temp_flag;
-//            }
-//
-//            if ( ImGui::Button( "Load Camera view" ) )
-//            {
-//                g_gl_camera.load_camera( gl_camera_file_name );
-//            }
-//
-//            if ( ImGui::Button( "Save Camera view" ) )
-//            {
-//                cout << "Save view to " << gl_camera_file_name << endl;
-//                g_gl_camera.save_camera( gl_camera_file_name );
-//            }
-//            ImGui::Checkbox( "Show OpenGL camera paras", &g_display_camera_pose_window );
-//            ImGui::Text( "Refresh rate %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate );
-//            if ( ImGui::Button( "      Exit Program      " ) ) // Buttons return true when clicked (most widgets return true when edited/activated)
-//                glfwSetWindowShouldClose( window, 1 );
-//
-//            ImGui::End();
-//        }
-//
-//        if(g_draw_LiDAR_point)
-//        {
-//            if ( m_depth_view_camera.m_if_draw_depth_pts )
-//            {
-//                if ( m_depth_view_camera.m_draw_LiDAR_pts_size > 0 )
-//                {
-//                    display_current_LiDAR_pts( g_current_frame, m_depth_view_camera.m_draw_LiDAR_pts_size, vec_4f( 1.0, 1.0, 1.0, 0.85 ) );
-//                }
-//                display_reinforced_LiDAR_pts( m_depth_view_camera.m_depth_pts_vec, m_depth_view_camera.m_draw_depth_pts_size, vec_3f( 1.0, 0.0, 1.0 ) );
-//            }
-//        }
-//
-//        if ( g_follow_cam )
-//        {
-//            if ( g_current_frame > 1 )
-//            {
-//                g_gl_camera.tracking_camera( Eigen::Quaterniond::Identity(), t_last_avr );
-//            }
-//        }
-//
-//        if ( g_display_help_win )
-//        {
-//            // display help window
-//            print_help_window( &g_display_help_win );
-//        }
-//
-//        if ( g_display_camera_pose_window )
-//        {
-//            g_gl_camera.draw_camera_window( g_display_camera_pose_window );
-//        }
-//
-//        if ( g_if_draw_z_plane )
-//        {
-//            g_axis_shader.draw( g_gl_camera.m_gl_cam.m_glm_projection_mat,
-//                                Common_tools::eigen2glm( g_gl_camera.m_gl_cam.m_camera_pose_mat44_inverse ) );
-//            g_ground_plane_shader.draw( g_gl_camera.m_gl_cam.m_glm_projection_mat,
-//                                        Common_tools::eigen2glm( g_gl_camera.m_gl_cam.m_camera_pose_mat44_inverse ) );
-//        }
-//
-//        // 感觉与mesh有关的部分 只有这里能启动整个的重建部分
-//        if ( g_display_mesh )
-//        {
-//            draw_triangle( g_gl_camera.m_gl_cam );
-//        }
-//
-//        if ( g_current_frame >= 0 )
-//        {
-//            draw_camera_pose( g_current_frame, g_draw_path_size, g_display_camera_size );
-//            draw_camera_trajectory( g_current_frame + 1, g_draw_path_size);
-//        }
-//
-//        // For Key-board control
-//        if ( g_gl_camera.if_press_key( "H" ) )
-//        {
-//            g_display_main_window = !g_display_main_window;
-//        }
-//        if ( g_gl_camera.if_press_key( "C" ) )
-//        {
-//            g_display_camera_pose_window = !g_display_camera_pose_window;
-//        }
-//        if ( g_gl_camera.if_press_key( "F" ) )
-//        {
-//            g_display_face = !g_display_face;
-//        }
-//        if ( g_gl_camera.if_press_key( "Space" ) )
-//        {
-//            g_flag_pause = !g_flag_pause;
-//        }
-//        if ( g_gl_camera.if_press_key( "S" ) )
-//        {
-//            g_gl_camera.save_camera( gl_camera_file_name );
-//        }
-//        if ( g_gl_camera.if_press_key( "Z" ) )
-//        {
-//            g_gl_camera.load_camera( gl_camera_file_name );
-//        }
-//        if ( g_gl_camera.if_press_key( "D" ) )
-//        {
-//            g_if_draw_depth = !g_if_draw_depth;
-//        }
-//        if ( g_gl_camera.if_press_key( "M" ) )
-//        {
-//            g_display_mesh = !g_display_mesh;
-//        }
-//        if ( g_gl_camera.if_press_key( "T" ) )
-//        {
-//            g_follow_cam = !g_follow_cam;
-//            if ( g_current_frame > 1 )
-//            {
-//                g_gl_camera.set_last_tracking_camera_pos( q_last_avr, t_last_avr );
-//            }
-//        }
-//        if ( g_gl_camera.if_press_key( "Escape" ) )
-//        {
-//            glfwSetWindowShouldClose( window, 1 );
-//        }
-//
-//        if ( g_gl_camera.if_press_key( "F1" ) )
-//        {
-//            g_display_help_win = !g_display_help_win;
-//        }
-//
-//        g_gl_camera.set_gl_camera_pose_matrix();
-//        g_gl_camera.draw_frame_finish();
-//    }
+//     Rasterization configuration ( openGL能够之间生成相机视图 —— 这里对应的可能就是一个直接输出的深度相机图 )
+    Cam_view m_depth_view_camera;
+    m_depth_view_camera.m_display_w = 640;
+    m_depth_view_camera.m_display_h = 480;
+    m_depth_view_camera.m_camera_focus = 400;
+    m_depth_view_camera.m_maximum_disp_depth = 150.0;
+    m_depth_view_camera.m_draw_depth_pts_size = 2;
+    m_depth_view_camera.m_draw_LiDAR_pts_size = m_depth_view_camera.m_draw_depth_pts_size;
+    m_depth_view_camera.m_if_draw_depth_pts = true;
+    vec_3 ext_rot_angle = vec_3( 0, 0, 0 );
+
+//     剩余只与 openGL 显示结果相关
+    while ( !glfwWindowShouldClose( window ) )
+    {
+        g_gl_camera.draw_frame_start();
+
+        Eigen::Quaterniond q_last_avr;
+        vec_3              t_last_avr;
+        get_last_avr_pose( g_current_frame, q_last_avr, t_last_avr );
+        if ( g_if_draw_depth )
+        {
+            Common_tools::Timer tim;
+            tim.tic();
+            m_depth_view_camera.m_camera_z_far = g_gl_camera.m_gl_cam.m_camera_z_far;
+            m_depth_view_camera.m_camera_z_near = g_gl_camera.m_gl_cam.m_camera_z_near;
+
+            if ( g_if_depth_bind_cam )
+                m_depth_view_camera.set_camera_pose( q_last_avr.toRotationMatrix(), t_last_avr );
+            else
+                m_depth_view_camera.set_camera_pose( g_gl_camera.m_gl_cam.m_camera_rot, g_gl_camera.m_gl_cam.m_camera_pos );
+
+            m_depth_view_camera.set_gl_matrix();
+
+            draw_triangle( m_depth_view_camera );
+
+            m_depth_view_camera.read_depth();
+            glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+            m_depth_view_camera.draw_depth_image();
+            g_gl_camera.set_gl_camera_pose_matrix();
+            if(m_depth_view_camera.m_if_draw_depth_pts)
+            {
+                g_draw_LiDAR_point = true;
+            }
+        }
+
+        if ( g_display_main_window )
+        {
+            ImGui::Begin( "ImMesh's Main_windows", &g_display_main_window );               // Create a window called "Hello, world!" and append into it.
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.75f), "ImMesh: An Immediate LiDAR Localization and Meshing Framework");
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.75f), "Github:  ");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "https://github.com/hku-mars/ImMesh");
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.75f), "Author:  ");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 1.0f, 1.0f), "Jiarong Lin & Chongjian Yuan");
+            if (ImGui::TreeNode("Help"))
+            {
+                ImGui::Text( "[H]    | Display/Close main windows" );
+                ImGui::Text( "[C]    | Show/Close camera pose windows" );
+                ImGui::Text( "[T]    | Follow the camera" );
+                ImGui::Text( "[D]    | Show/close the depth image" );
+                ImGui::Text( "[L]    | Show/close the LiDAR points" );
+                ImGui::Text( "[M]    | Show/close the mesh" );
+                ImGui::Text( "[S]    | Save camera view" );
+                ImGui::Text( "[Z]    | Load camera view" );
+                ImGui::Text( "[+/-]  | Increase/Decrease the line width" );
+                ImGui::Text( "[F1]   | Display help window" );
+                ImGui::Text( "[Space]| To pause the program" );
+                ImGui::Text( "[Esc]  | Exit the program" );
+                ImGui::TreePop();
+                ImGui::Separator();
+            }
+            ImGui::SetNextItemOpen(true, 1);
+            // ImGui::SetNextTreeNodeOpen();
+            if (ImGui::TreeNode("Draw Online reconstructed mesh options:"))
+            {
+                ImGui::RadioButton("Draw mesh's Facet", &g_display_face, 1);
+                ImGui::RadioButton("Draw mesh's Wireframe", &g_display_face, 0);
+                if(ImGui::Checkbox( "Draw mesh with color", &g_mesh_if_color ))
+                {
+                    g_force_refresh_triangle = true;
+                }
+                ImGui::TreePop();
+                ImGui::Separator();
+            }
+            if (ImGui::TreeNode("LiDAR pointcloud reinforcement"))
+            {
+                ImGui::Checkbox( "Enable", &g_if_draw_depth );
+                if(g_if_draw_depth)
+                {
+                    ImGui::Checkbox( "If depth in sensor frame", &g_if_depth_bind_cam );
+                }
+                ImGui::SliderInt( "Reinforced point size", &m_depth_view_camera.m_draw_depth_pts_size, 0, 10 );
+                ImGui::SliderInt( "LiDAR point size", &m_depth_view_camera.m_draw_LiDAR_pts_size, 0, 10 );
+                ImGui::TreePop();
+                ImGui::Separator();
+            }
+            ImGui::Checkbox( "Move follow camera", &g_follow_cam );
+            ImGui::Checkbox( "Mapping pause", &g_flag_pause );
+            ImGui::Checkbox( "Draw LiDAR point", &g_draw_LiDAR_point );
+            if(g_draw_LiDAR_point)
+            {
+                ImGui::SliderInt( "LiDAR point size", & m_depth_view_camera.m_draw_LiDAR_pts_size, 0, 10 );
+            }
+            ImGui::Checkbox( "Axis and Z_plane", &g_if_draw_z_plane );
+
+            ImGui::SliderFloat( "Path width", &g_draw_path_size, 1.0, 10.0f );
+            ImGui::SliderFloat( "Camera size", &g_display_camera_size, 0.01, 10.0, "%lf", ImGuiSliderFlags_Logarithmic );
+
+            if ( ImGui::Button( "  Save Mesh to PLY file  " ) )
+            {
+                int temp_flag = g_flag_pause;
+                g_flag_pause = true;
+                Common_tools::create_dir( data_path_file );
+                save_to_ply_file( std::string( data_path_file ).append( "/rec_mesh.ply" ), g_ply_smooth_factor, g_ply_smooth_k );
+                g_flag_pause = temp_flag;
+            }
+
+            if ( ImGui::Button( "Load Camera view" ) )
+            {
+                g_gl_camera.load_camera( gl_camera_file_name );
+            }
+
+            if ( ImGui::Button( "Save Camera view" ) )
+            {
+                cout << "Save view to " << gl_camera_file_name << endl;
+                g_gl_camera.save_camera( gl_camera_file_name );
+            }
+            ImGui::Checkbox( "Show OpenGL camera paras", &g_display_camera_pose_window );
+            ImGui::Text( "Refresh rate %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate );
+            if ( ImGui::Button( "      Exit Program      " ) ) // Buttons return true when clicked (most widgets return true when edited/activated)
+                glfwSetWindowShouldClose( window, 1 );
+
+            ImGui::End();
+        }
+
+        if(g_draw_LiDAR_point)
+        {
+            if ( m_depth_view_camera.m_if_draw_depth_pts )
+            {
+                if ( m_depth_view_camera.m_draw_LiDAR_pts_size > 0 )
+                {
+                    display_current_LiDAR_pts( g_current_frame, m_depth_view_camera.m_draw_LiDAR_pts_size, vec_4f( 1.0, 1.0, 1.0, 0.85 ) );
+                }
+                display_reinforced_LiDAR_pts( m_depth_view_camera.m_depth_pts_vec, m_depth_view_camera.m_draw_depth_pts_size, vec_3f( 1.0, 0.0, 1.0 ) );
+            }
+        }
+
+        // 这部分的作用表现的不是那么明显 - 感觉没啥用 - 不开启这个功能实际上的ImGUI也是可以正常使用的
+        if ( g_follow_cam )
+        {
+            if ( g_current_frame > 1 )
+            {
+                g_gl_camera.tracking_camera( Eigen::Quaterniond::Identity(), t_last_avr );
+            }
+        }
+
+        if ( g_display_help_win )
+        {
+            // display help window
+            print_help_window( &g_display_help_win );
+        }
+
+        if ( g_display_camera_pose_window )
+        {
+            g_gl_camera.draw_camera_window( g_display_camera_pose_window );
+        }
+
+        if ( g_if_draw_z_plane )
+        {
+            g_axis_shader.draw( g_gl_camera.m_gl_cam.m_glm_projection_mat,
+                                Common_tools::eigen2glm( g_gl_camera.m_gl_cam.m_camera_pose_mat44_inverse ) );
+            g_ground_plane_shader.draw( g_gl_camera.m_gl_cam.m_glm_projection_mat,
+                                        Common_tools::eigen2glm( g_gl_camera.m_gl_cam.m_camera_pose_mat44_inverse ) );
+        }
+
+        // 感觉与mesh有关的部分 只有这里能启动整个的重建部分
+        if ( g_display_mesh )
+        {
+            draw_triangle( g_gl_camera.m_gl_cam );
+        }
+
+        if ( g_current_frame >= 0 )
+        {
+            draw_camera_pose( g_current_frame, g_draw_path_size, g_display_camera_size );
+            draw_camera_trajectory( g_current_frame + 1, g_draw_path_size);
+        }
+
+        // For Key-board control
+        if ( g_gl_camera.if_press_key( "H" ) )
+        {
+            g_display_main_window = !g_display_main_window;
+        }
+        if ( g_gl_camera.if_press_key( "C" ) )
+        {
+            g_display_camera_pose_window = !g_display_camera_pose_window;
+        }
+        if ( g_gl_camera.if_press_key( "F" ) )
+        {
+            g_display_face = !g_display_face;
+        }
+        if ( g_gl_camera.if_press_key( "Space" ) )
+        {
+            g_flag_pause = !g_flag_pause;
+        }
+        if ( g_gl_camera.if_press_key( "S" ) )
+        {
+            g_gl_camera.save_camera( gl_camera_file_name );
+        }
+        if ( g_gl_camera.if_press_key( "Z" ) )
+        {
+            g_gl_camera.load_camera( gl_camera_file_name );
+        }
+        if ( g_gl_camera.if_press_key( "D" ) )
+        {
+            g_if_draw_depth = !g_if_draw_depth;
+        }
+        if ( g_gl_camera.if_press_key( "M" ) )
+        {
+            g_display_mesh = !g_display_mesh;
+        }
+        if ( g_gl_camera.if_press_key( "T" ) )
+        {
+            g_follow_cam = !g_follow_cam;
+            if ( g_current_frame > 1 )
+            {
+                g_gl_camera.set_last_tracking_camera_pos( q_last_avr, t_last_avr );
+            }
+        }
+        if ( g_gl_camera.if_press_key( "Escape" ) )
+        {
+            glfwSetWindowShouldClose( window, 1 );
+        }
+
+        if ( g_gl_camera.if_press_key( "F1" ) )
+        {
+            g_display_help_win = !g_display_help_win;
+        }
+
+        g_gl_camera.set_gl_camera_pose_matrix();
+        g_gl_camera.draw_frame_finish();
+    }
 
     // Cleanup
-//    ImGui_ImplOpenGL3_Shutdown();
-//    ImGui_ImplGlfw_Shutdown();
-//    ImGui::DestroyContext();
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
 
-//    glfwDestroyWindow( window );
-//    glfwTerminate();
+    glfwDestroyWindow( window );
+    glfwTerminate();
 
 
 
-    thr_mapping.join();
+//    thr_mapping.join();
     google::ShutdownGoogleLogging();
     return 0;
 }

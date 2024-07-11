@@ -50,9 +50,13 @@ Dr. Fu Zhang < fuzhang@hku.hk >.
 #include "../optical_flow/lkpyramid.hpp"
 #include <glog/logging.h>
 #include <opencv2/calib3d.hpp>
+#include "voxel_mapping.hpp"
 
+std::vector< std::shared_ptr <ros::Publisher> > m_pub_rgb_render_pointcloud_ptr_vec;
 extern Common_tools::Cost_time_logger              g_cost_time_logger;
 extern std::shared_ptr< Common_tools::ThreadPool > m_thread_pool_ptr;
+extern Voxel_mapping voxel_mapping;
+
 cv::RNG                                            g_rng = cv::RNG( 0 );
 // std::atomic<long> g_pts_index(0);
 double                     g_voxel_resolution = 0.1;
@@ -125,77 +129,119 @@ const double process_noise_sigma = 0.15;
 // const double process_noise_sigma = 150000;
 // const double process_noise_sigma = 0.0;
 const int THRESHOLD_OVEREXPOSURE = 255;
-int RGB_pts::update_rgb( const vec_3& rgb, const double obs_dis, const vec_3 obs_sigma, const double obs_time, const double current_exposure_time )
+
+/// @attention 这里是r3live自己给出来的部分
+int RGB_pts::update_rgb(const vec_3 &rgb, const double obs_dis, const vec_3 obs_sigma, const double obs_time)
 {
-    if ( rgb.norm() == 0 ) // avoid less-exposure
+    if (m_obs_dis != 0 && (obs_dis > m_obs_dis * 1.2))
     {
         return 0;
     }
 
-    if ( rgb( 0 ) > THRESHOLD_OVEREXPOSURE && rgb( 1 ) > THRESHOLD_OVEREXPOSURE && rgb( 2 ) > THRESHOLD_OVEREXPOSURE ) // avoid the over-exposure
-    {
-        return 0;
-    }
-
-    if ( m_obs_dis != 0 && ( ( obs_dis > m_obs_dis * 1.1 ) ) )
-    {
-        return 0;
-    }
-
-    if ( m_N_rgb == 0 )
+    if( m_N_rgb == 0)
     {
         // For first time of observation.
         m_last_obs_time = obs_time;
         m_obs_dis = obs_dis;
-        m_first_obs_exposure_time = current_exposure_time;
-        for ( int i = 0; i < 3; i++ )
+        for (int i = 0; i < 3; i++)
         {
-            m_rgb[ i ] = rgb( i ) * current_exposure_time;
-            m_cov_rgb[ i ] = obs_sigma( i );
+            m_rgb[i] = rgb[i];
+            m_cov_rgb[i] = obs_sigma(i) ;
         }
         m_N_rgb = 1;
         return 0;
     }
-
     // State estimation for robotics, section 2.2.6, page 37-38
-    for ( int i = 0; i < 3; i++ )
+    for(int i = 0 ; i < 3; i++)
     {
-        m_cov_rgb[ i ] = ( m_cov_rgb[ i ] + process_noise_sigma * ( obs_time - m_last_obs_time ) ); // Add process noise
-        double old_sigma = m_cov_rgb[ i ];
-        m_cov_rgb[ i ] = sqrt( 1.0 / ( 1.0 / m_cov_rgb[ i ] / m_cov_rgb[ i ] + 1.0 / obs_sigma( i ) / obs_sigma( i ) ) );
-        m_rgb[ i ] = m_cov_rgb[ i ] * m_cov_rgb[ i ] *
-                     ( m_rgb[ i ] / old_sigma / old_sigma + rgb( i ) * current_exposure_time / obs_sigma( i ) / obs_sigma( i ) );
+        m_cov_rgb[i] = (m_cov_rgb[i] + process_noise_sigma * (obs_time - m_last_obs_time)); // Add process noise
+        double old_sigma = m_cov_rgb[i];
+        // 更新 rgb值以及方差信息
+        m_cov_rgb[i] = sqrt( 1.0 / (1.0 / m_cov_rgb[i] / m_cov_rgb[i] + 1.0 / obs_sigma(i) / obs_sigma(i)) );
+        m_rgb[i] = m_cov_rgb[i] * m_cov_rgb[i] * ( m_rgb[i] / old_sigma / old_sigma + rgb(i) / obs_sigma(i) / obs_sigma(i) );
     }
 
-    vec_3  res_rgb_vec = vec_3( m_rgb[ 0 ], m_rgb[ 1 ], m_rgb[ 2 ] ) / m_first_obs_exposure_time;
-    double max_rgb = res_rgb_vec.maxCoeff(); // Avoid overexposure.
-    if ( max_rgb > 255 )
-    {
-        for ( int i = 0; i < 3; i++ )
-        {
-            m_rgb[ i ] = m_rgb[ i ] * 254.999 / max_rgb;
-        }
-    }
-
-    // if(m_first_obs_exposure_time > 1.0 / g_camera_exp_tim_lower_bound)
-    // {
-    //     m_first_obs_exposure_time = 1.0 / g_camera_exp_tim_lower_bound;
-    // }
-
-    if ( obs_dis < m_obs_dis )
+    if (obs_dis < m_obs_dis)
     {
         m_obs_dis = obs_dis;
     }
     m_last_obs_time = obs_time;
     m_N_rgb++;
-
-    //  if ( m_first_obs_exposure_time <= current_exposure_time )
-    // {
-    //     m_first_obs_exposure_time = current_exposure_time;
-    // }
-    m_first_obs_exposure_time = ( m_first_obs_exposure_time * ( m_N_rgb ) + current_exposure_time ) / ( m_N_rgb + 1 );
     return 1;
 }
+
+/// @attention 这里是ImMesh自己给出来的部分
+//int RGB_pts::update_rgb( const vec_3& rgb, const double obs_dis, const vec_3 obs_sigma, const double obs_time, const double current_exposure_time )
+//{
+//    if ( rgb.norm() == 0 ) // avoid less-exposure
+//    {
+//        return 0;
+//    }
+//
+//    if ( rgb( 0 ) > THRESHOLD_OVEREXPOSURE && rgb( 1 ) > THRESHOLD_OVEREXPOSURE && rgb( 2 ) > THRESHOLD_OVEREXPOSURE ) // avoid the over-exposure
+//    {
+//        return 0;
+//    }
+//
+//    if ( m_obs_dis != 0 && ( ( obs_dis > m_obs_dis * 1.1 ) ) )
+//    {
+//        return 0;
+//    }
+//
+//    if ( m_N_rgb == 0 )
+//    {
+//        // For first time of observation.
+//        m_last_obs_time = obs_time;
+//        m_obs_dis = obs_dis;
+//        m_first_obs_exposure_time = current_exposure_time;
+//        for ( int i = 0; i < 3; i++ )
+//        {
+//            m_rgb[ i ] = rgb( i ) * current_exposure_time;
+//            m_cov_rgb[ i ] = obs_sigma( i );
+//        }
+//        m_N_rgb = 1;
+//        return 0;
+//    }
+//
+//    // State estimation for robotics, section 2.2.6, page 37-38
+//    for ( int i = 0; i < 3; i++ )
+//    {
+//        m_cov_rgb[ i ] = ( m_cov_rgb[ i ] + process_noise_sigma * ( obs_time - m_last_obs_time ) ); // Add process noise
+//        double old_sigma = m_cov_rgb[ i ];
+//        m_cov_rgb[ i ] = sqrt( 1.0 / ( 1.0 / m_cov_rgb[ i ] / m_cov_rgb[ i ] + 1.0 / obs_sigma( i ) / obs_sigma( i ) ) );
+//        m_rgb[ i ] = m_cov_rgb[ i ] * m_cov_rgb[ i ] *
+//                     ( m_rgb[ i ] / old_sigma / old_sigma + rgb( i ) * current_exposure_time / obs_sigma( i ) / obs_sigma( i ) );
+//    }
+//
+//    vec_3  res_rgb_vec = vec_3( m_rgb[ 0 ], m_rgb[ 1 ], m_rgb[ 2 ] ) / m_first_obs_exposure_time;
+//    double max_rgb = res_rgb_vec.maxCoeff(); // Avoid overexposure.
+//    if ( max_rgb > 255 )
+//    {
+//        for ( int i = 0; i < 3; i++ )
+//        {
+//            m_rgb[ i ] = m_rgb[ i ] * 254.999 / max_rgb;
+//        }
+//    }
+//
+//    // if(m_first_obs_exposure_time > 1.0 / g_camera_exp_tim_lower_bound)
+//    // {
+//    //     m_first_obs_exposure_time = 1.0 / g_camera_exp_tim_lower_bound;
+//    // }
+//
+//    if ( obs_dis < m_obs_dis )
+//    {
+//        m_obs_dis = obs_dis;
+//    }
+//    m_last_obs_time = obs_time;
+//    m_N_rgb++;
+//
+//    //  if ( m_first_obs_exposure_time <= current_exposure_time )
+//    // {
+//    //     m_first_obs_exposure_time = current_exposure_time;
+//    // }
+//    m_first_obs_exposure_time = ( m_first_obs_exposure_time * ( m_N_rgb ) + current_exposure_time ) / ( m_N_rgb + 1 );
+//    return 1;
+//}
 
 // void RGB_Voxel::refresh_triangles()
 // {
@@ -357,17 +403,17 @@ void Global_map::service_refresh_pts_for_projection()
     }
 }
 
-void Global_map::render_points_for_projection( std::shared_ptr< Image_frame >& img_ptr )
-{
-    m_mutex_pts_vec->lock();
-    if ( m_pts_rgb_vec_for_projection != nullptr )
-    {
-        render_pts_in_voxels( img_ptr, *m_pts_rgb_vec_for_projection );
-        // render_pts_in_voxels(img_ptr, m_rgb_pts_vec);
-    }
-    m_last_updated_frame_idx = img_ptr->m_frame_idx;
-    m_mutex_pts_vec->unlock();
-}
+//void Global_map::render_points_for_projection( std::shared_ptr< Image_frame >& img_ptr )
+//{
+//    m_mutex_pts_vec->lock();
+//    if ( m_pts_rgb_vec_for_projection != nullptr )
+//    {
+//        render_pts_in_voxels( img_ptr, *m_pts_rgb_vec_for_projection );
+//        // render_pts_in_voxels(img_ptr, m_rgb_pts_vec);
+//    }
+//    m_last_updated_frame_idx = img_ptr->m_frame_idx;
+//    m_mutex_pts_vec->unlock();
+//}
 
 void Global_map::update_pose_for_projection( std::shared_ptr< Image_frame >& img, double fov_margin )
 {
@@ -585,59 +631,59 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
     return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
 }
 
-
-void Global_map::render_pts_in_voxels( std::shared_ptr< Image_frame >& img_ptr, std::vector< std::shared_ptr< RGB_pts > >& pts_for_render,
-                                       double obs_time )
-{
-    Common_tools::Timer tim;
-    tim.tic();
-    double u, v;
-    int    hit_count = 0;
-    int    pt_size = pts_for_render.size();
-    m_last_updated_frame_idx = img_ptr->m_frame_idx;
-    double min_voxel_dis = 3e8;
-    for ( int i = 0; i < pt_size; i++ )
-    {
-        double pt_cam_dis = ( pts_for_render[ i ]->get_pos() - img_ptr->m_pose_w2c_t ).dot( img_ptr->m_image_norm );
-        if ( pt_cam_dis < min_voxel_dis )
-        {
-            min_voxel_dis = pt_cam_dis;
-        }
-    }
-    double allow_render_dis = std::max( 0.05, g_voxel_resolution * 0.1 );
-    for ( int i = 0; i < pt_size; i++ )
-    {
-
-        vec_3  pt_w = pts_for_render[ i ]->get_pos();
-        double pt_cam_dis = ( pt_w - img_ptr->m_pose_w2c_t ).dot( img_ptr->m_image_norm );
-        ;
-        if ( ( pt_cam_dis - min_voxel_dis > allow_render_dis ) && ( pts_for_render[ i ]->m_N_rgb > 5 ) )
-        {
-            continue;
-        }
-        bool res = img_ptr->project_3d_point_in_this_img( pt_w, u, v, nullptr, 1.0 );
-        if ( res == false )
-        {
-            continue;
-        }
-        hit_count++;
-        vec_2 gama_bak = img_ptr->m_gama_para;
-        img_ptr->m_gama_para = vec_2( 1.0, 0.0 ); // Render using normal value?
-        double gray = img_ptr->get_grey_color( u, v, 0 );
-        vec_3  rgb_color = img_ptr->get_rgb( u, v, 0 );
-        if ( rgb_color.maxCoeff() > 255.0 )
-        {
-            cout << ANSI_COLOR_RED << "Error, render RGB = " << rgb_color.transpose() << ANSI_COLOR_RESET << endl;
-        }
-        // pts_for_render[i]->update_gray(gray, pt_cam.norm());
-        pts_for_render[ i ]->update_rgb( rgb_color, pt_cam_dis, vec_3( image_obs_cov, image_obs_cov, image_obs_cov ), obs_time,
-                                         img_ptr->m_image_inverse_exposure_time );
-        img_ptr->m_gama_para = gama_bak;
-        // m_rgb_pts_vec[i]->update_rgb( vec_3(gray, gray, gray) );
-    }
-    // cout << "Render cost time = " << tim.toc() << endl;
-    // cout << "Total hit count = " << hit_count << endl;
-}
+///// @attention 这里可能是原作者是自己写的渲染过程
+//void Global_map::render_pts_in_voxels( std::shared_ptr< Image_frame >& img_ptr, std::vector< std::shared_ptr< RGB_pts > >& pts_for_render,
+//                                       double obs_time )
+//{
+//    Common_tools::Timer tim;
+//    tim.tic();
+//    double u, v;
+//    int    hit_count = 0;
+//    int    pt_size = pts_for_render.size();
+//    m_last_updated_frame_idx = img_ptr->m_frame_idx;
+//    double min_voxel_dis = 3e8;
+//    for ( int i = 0; i < pt_size; i++ )
+//    {
+//        double pt_cam_dis = ( pts_for_render[ i ]->get_pos() - img_ptr->m_pose_w2c_t ).dot( img_ptr->m_image_norm );
+//        if ( pt_cam_dis < min_voxel_dis )
+//        {
+//            min_voxel_dis = pt_cam_dis;
+//        }
+//    }
+//    double allow_render_dis = std::max( 0.05, g_voxel_resolution * 0.1 );
+//    for ( int i = 0; i < pt_size; i++ )
+//    {
+//
+//        vec_3  pt_w = pts_for_render[ i ]->get_pos();
+//        double pt_cam_dis = ( pt_w - img_ptr->m_pose_w2c_t ).dot( img_ptr->m_image_norm );
+//        ;
+//        if ( ( pt_cam_dis - min_voxel_dis > allow_render_dis ) && ( pts_for_render[ i ]->m_N_rgb > 5 ) )
+//        {
+//            continue;
+//        }
+//        bool res = img_ptr->project_3d_point_in_this_img( pt_w, u, v, nullptr, 1.0 );
+//        if ( res == false )
+//        {
+//            continue;
+//        }
+//        hit_count++;
+//        vec_2 gama_bak = img_ptr->m_gama_para;
+//        img_ptr->m_gama_para = vec_2( 1.0, 0.0 ); // Render using normal value?
+//        double gray = img_ptr->get_grey_color( u, v, 0 );
+//        vec_3  rgb_color = img_ptr->get_rgb( u, v, 0 );
+//        if ( rgb_color.maxCoeff() > 255.0 )
+//        {
+//            cout << ANSI_COLOR_RED << "Error, render RGB = " << rgb_color.transpose() << ANSI_COLOR_RESET << endl;
+//        }
+//        // pts_for_render[i]->update_gray(gray, pt_cam.norm());
+//        pts_for_render[ i ]->update_rgb( rgb_color, pt_cam_dis, vec_3( image_obs_cov, image_obs_cov, image_obs_cov ), obs_time,
+//                                         img_ptr->m_image_inverse_exposure_time );
+//        img_ptr->m_gama_para = gama_bak;
+//        // m_rgb_pts_vec[i]->update_rgb( vec_3(gray, gray, gray) );
+//    }
+//    // cout << "Render cost time = " << tim.toc() << endl;
+//    // cout << "Total hit count = " << hit_count << endl;
+//}
 
 Common_tools::Cost_time_logger cost_time_logger_render( "/home/ziv/temp/render_thr.log" );
 
@@ -645,6 +691,7 @@ Common_tools::Cost_time_logger cost_time_logger_render( "/home/ziv/temp/render_t
 // ANCHOR - thread_render_pts_in_voxel
 std::atomic< long >  render_pts_count;
 extern double        g_maximum_pe_error;
+
 static inline double thread_render_pts_in_voxel( const int& pt_start, const int& pt_end, const std::shared_ptr< Image_frame >& img_ptr,
                                                  const std::vector< RGB_voxel_ptr >* voxels_for_render, const double obs_time )
 {
@@ -684,6 +731,7 @@ static inline double thread_render_pts_in_voxel( const int& pt_start, const int&
             }
         }
     }
+    LOG(INFO) << "Finish this rendering process" ;
     double cost_time = tim.toc() * 100;
     return cost_time;
 //    LOG(INFO) << "[thread_render_pts_in_voxel]: voxels_for_render size " << voxels_for_render->size();
@@ -787,15 +835,13 @@ void render_pts_in_voxels_mp( std::shared_ptr< Image_frame >& img_ptr, std::unor
     render_pts_count = 0;
     img_ptr->m_acc_render_count = 0;
     img_ptr->m_acc_photometric_error = 0;
-    LOG(INFO) << "USING_OPENCV_TBB: " << USING_OPENCV_TBB;
 
     if ( USING_OPENCV_TBB )
     {
         LOG(INFO) << "prepare multi-thread to process the rendering work";
 //        cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
 //                           [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, img_ptr, &g_voxel_for_render, obs_time ); } );
-
-        /// @bug 这里程序在运行最后一帧的时候出现错误 | 而且是无论数入的numbers_of_voxels数量是多少，这里都是在最后一帧的部分出现错误
+        /// @attention 原版的程序在渲染点云上就没有问题 | 只是在immesh中的record的部分有问题的(使用这个部分会导致段错误) | 注意这里发布RGB点云是另一个线程进行处理的
         thread_render_pts_in_voxel(0, numbers_of_voxels , img_ptr, &g_voxel_for_render, obs_time);
     }
     else
@@ -824,38 +870,38 @@ void render_pts_in_voxels_mp( std::shared_ptr< Image_frame >& img_ptr, std::unor
     // ANCHOR - record photometric error
     // printf( "Image frame = %d, count = %d, acc_PT = %.3f, avr_PE = %.3f\r\n", img_ptr->m_frame_idx, long( img_ptr->m_acc_render_count ),
     //         double( img_ptr->m_acc_photometric_error), double( img_ptr->m_acc_photometric_error) / long(img_ptr->m_acc_render_count ) );
-    if ( photometric_fp == nullptr )
-    {
-        photometric_fp = fopen( std::string( Common_tools::get_home_folder().c_str() ).append( "/r3live_output/photometric.log" ).c_str(), "w+" );
-    }
-    if ( long( img_ptr->m_acc_render_count ) != 0 )
-    {
-        fprintf( photometric_fp, "%f %d %d %f %f\r\n", img_ptr->m_timestamp, img_ptr->m_frame_idx, long( img_ptr->m_acc_render_count ),
-                 double( img_ptr->m_acc_photometric_error ) / long( img_ptr->m_acc_render_count ), double( img_ptr->m_acc_photometric_error ) );
-        fflush( photometric_fp );
-    }
+//    if ( photometric_fp == nullptr )
+//    {
+//        photometric_fp = fopen( std::string( Common_tools::get_home_folder().c_str() ).append( "/r3live_output/photometric.log" ).c_str(), "w+" );
+//    }
+//    if ( long( img_ptr->m_acc_render_count ) != 0 )
+//    {
+//        fprintf( photometric_fp, "%f %d %d %f %f\r\n", img_ptr->m_timestamp, img_ptr->m_frame_idx, long( img_ptr->m_acc_render_count ),
+//                 double( img_ptr->m_acc_photometric_error ) / long( img_ptr->m_acc_render_count ), double( img_ptr->m_acc_photometric_error ) );
+//        fflush( photometric_fp );
+//    }
     // img_ptr->release_image();
-    cost_time_logger_render.flush_d();
-    g_cost_time_logger.record( tim, "Render_mp" );
-    g_cost_time_logger.record( "Pts_num_r", render_pts_count );
+//    cost_time_logger_render.flush_d();
+//    g_cost_time_logger.record( tim, "Render_mp" );
+//    g_cost_time_logger.record( "Pts_num_r", render_pts_count );
 }
 //! SECTION
 
-void Global_map::render_with_a_image( std::shared_ptr< Image_frame >& img_ptr, int if_select )
-{
-
-    std::vector< std::shared_ptr< RGB_pts > > pts_for_render;
-    // pts_for_render = m_rgb_pts_vec;
-    if ( if_select )
-    {
-        selection_points_for_projection( img_ptr, &pts_for_render, nullptr, 1.0 );
-    }
-    else
-    {
-        pts_for_render = m_rgb_pts_vec;
-    }
-    render_pts_in_voxels( img_ptr, pts_for_render );
-}
+//void Global_map::render_with_a_image( std::shared_ptr< Image_frame >& img_ptr, int if_select )
+//{
+//
+//    std::vector< std::shared_ptr< RGB_pts > > pts_for_render;
+//    // pts_for_render = m_rgb_pts_vec;
+//    if ( if_select )
+//    {
+//        selection_points_for_projection( img_ptr, &pts_for_render, nullptr, 1.0 );
+//    }
+//    else
+//    {
+//        pts_for_render = m_rgb_pts_vec;
+//    }
+//    render_pts_in_voxels( img_ptr, pts_for_render );
+//}
 
 
 /// @brief 3d点对图像进行投影 |
@@ -894,7 +940,7 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
 
     if ( ( !use_all_pts ) && boxes_recent_hitted.size() )
     {
-        LOG(INFO) << "Get voxel points to projection";
+//        LOG(INFO) << "Get voxel points to projection";
         m_mutex_rgb_pts_in_recent_hitted_boxes->lock();
         for ( Voxel_set_iterator it = boxes_recent_hitted.begin(); it != boxes_recent_hitted.end(); it++ )
         {
@@ -1150,4 +1196,137 @@ void Global_map::read_ros_parameters(ros::NodeHandle &nh)
     // ros参数服务器的时候获取数据的方法
     //m_ros_node_ptr->getParam( "r3live_vio/camera_intrinsic", camera_intrinsic_data );
     std::this_thread::sleep_for( std::chrono::seconds( 1 ) );
+}
+
+
+
+void Global_map::service_pub_rgb_maps()
+{
+
+    LOG(INFO) << "---- Start the service_pub_rgb_maps ----";
+    int last_publish_map_idx = -3e8;
+    int sleep_time_aft_pub = 10;
+    int number_of_pts_per_topic = 10000;
+    if ( number_of_pts_per_topic < 0 )
+    {
+        return;
+    }
+
+    m_pub_rgb_render_pointcloud_ptr_vec.resize(1e3);
+
+
+    pcl::PointCloud<pcl::PointXYZRGB> pc_rgb;
+//    std::this_thread::sleep_for( std::chrono::milliseconds( 50000 ) );     // 手动指定了250s 主要是m2DGR运行出来的数据就是300s，250s就是看最终效果怎么样
+//    for (size_t i = 0; i < m_rgb_pts_vec.size(); ++i) {
+//        if (m_rgb_pts_vec[i]->m_N_rgb < 1) {
+//            continue;
+//        }
+//        pcl::PointXYZRGB point;
+//        point.x = m_rgb_pts_vec[i]->m_pos[0];
+//        point.y = m_rgb_pts_vec[i]->m_pos[1];
+//        point.z = m_rgb_pts_vec[i]->m_pos[2];
+//        point.r = m_rgb_pts_vec[i]->m_rgb[2];
+//        point.g = m_rgb_pts_vec[i]->m_rgb[1];
+//        point.b = m_rgb_pts_vec[i]->m_rgb[0];
+//        pc_rgb.points.push_back(point);
+//    }
+//
+//    pc_rgb.width = pc_rgb.points.size();
+//    pc_rgb.height = 1;  // 无组织点云
+//    pc_rgb.is_dense = false;
+//    string filename = "/home/supercoconut/output.pcd";
+//    // 保存为 PCD 文件
+//    if (pcl::io::savePCDFileASCII(filename, pc_rgb) == -1) {
+//        PCL_ERROR("Could not save PCD file\n");
+//    } else {
+//        std::cout << "Saved " << pc_rgb.points.size() << " data points to " << filename << std::endl;
+//    }
+
+    while ( 1 )
+    {
+        ros::spinOnce();
+        std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
+        pcl::PointCloud< pcl::PointXYZRGB > pc_rgb;
+        sensor_msgs::PointCloud2            ros_pc_msg;
+//        LOG(INFO) << "m_rgb_pts_vec.size()" << m_rgb_pts_vec.size();
+        int pts_size = m_rgb_pts_vec.size();            // 获取Global_map中的数据
+
+        /// @bug 这里频繁地访问数据难道不需要上锁么
+        while(!m_rgb_pts_vec.size())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        pc_rgb.resize( number_of_pts_per_topic );
+        int pub_idx_size = 0;
+        int cur_topic_idx = 0;
+//        LOG(INFO) << "last_publish_map_idx" << last_publish_map_idx << " m_last_updated_frame_idx" << m_last_updated_frame_idx;
+        if ( last_publish_map_idx == m_last_updated_frame_idx )
+        {
+            continue;
+        }
+        last_publish_map_idx = m_last_updated_frame_idx;
+
+        LOG(INFO) << "pts_size: " << pts_size;
+        for ( int i = 0; i < pts_size; i++ )
+        {
+            if ( m_rgb_pts_vec[ i ]->m_N_rgb < 1 )
+            {
+                continue;
+            }
+            pc_rgb.points[ pub_idx_size ].x = m_rgb_pts_vec[ i ]->m_pos[ 0 ];
+            pc_rgb.points[ pub_idx_size ].y = m_rgb_pts_vec[ i ]->m_pos[ 1 ];
+            pc_rgb.points[ pub_idx_size ].z = m_rgb_pts_vec[ i ]->m_pos[ 2 ];
+            pc_rgb.points[ pub_idx_size ].r = m_rgb_pts_vec[ i ]->m_rgb[ 2 ];
+            pc_rgb.points[ pub_idx_size ].g = m_rgb_pts_vec[ i ]->m_rgb[ 1 ];
+            pc_rgb.points[ pub_idx_size ].b = m_rgb_pts_vec[ i ]->m_rgb[ 0 ];
+
+            pub_idx_size++;
+            if ( pub_idx_size == number_of_pts_per_topic )
+            {
+                pub_idx_size = 0;
+                pcl::toROSMsg( pc_rgb, ros_pc_msg );
+                ros_pc_msg.header.frame_id = "world";
+                ros_pc_msg.header.stamp = ros::Time::now();
+
+//                LOG(INFO) << "cur_topic_idx: " << cur_topic_idx;
+                /// @bug m_pub_rgb_render_pointcloud_ptr_vec 这里没实现初始化
+                if ( m_pub_rgb_render_pointcloud_ptr_vec[ cur_topic_idx ] == nullptr )
+                {
+                    m_pub_rgb_render_pointcloud_ptr_vec[ cur_topic_idx ] =
+                            std::make_shared< ros::Publisher >( voxel_mapping.m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >(
+                                    std::string( "/RGB_map_" ).append( std::to_string( cur_topic_idx ) ), 100 ) );
+                }
+                m_pub_rgb_render_pointcloud_ptr_vec[ cur_topic_idx ]->publish( ros_pc_msg );
+                std::this_thread::sleep_for( std::chrono::microseconds( sleep_time_aft_pub ) );
+                ros::spinOnce();
+                cur_topic_idx++;
+            }
+        }
+
+        pc_rgb.resize( pub_idx_size );
+        pcl::toROSMsg( pc_rgb, ros_pc_msg );
+        ros_pc_msg.header.frame_id = "world";
+        ros_pc_msg.header.stamp = ros::Time::now();
+
+        if ( m_pub_rgb_render_pointcloud_ptr_vec[ cur_topic_idx ] == nullptr )
+        {
+            m_pub_rgb_render_pointcloud_ptr_vec[ cur_topic_idx ] =
+                    std::make_shared< ros::Publisher >( voxel_mapping.m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >(
+                            std::string( "/RGB_map_" ).append( std::to_string( cur_topic_idx ) ), 100 ) );
+        }
+
+        std::this_thread::sleep_for( std::chrono::microseconds( sleep_time_aft_pub ) );
+        ros::spinOnce();
+
+        m_pub_rgb_render_pointcloud_ptr_vec[ cur_topic_idx ]->publish( ros_pc_msg );
+        cur_topic_idx++;
+        if ( cur_topic_idx >= 45 ) // Maximum pointcloud topics = 45.
+        {
+            number_of_pts_per_topic *= 1.5;
+            sleep_time_aft_pub *= 1.5;
+        }
+        LOG(INFO) << "Finish the rendering process";
+    }
 }
