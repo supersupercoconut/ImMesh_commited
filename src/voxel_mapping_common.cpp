@@ -1,46 +1,12 @@
-/* 
-This code is the implementation of our paper "ImMesh: An Immediate LiDAR Localization and Meshing Framework".
-
-The source code of this package is released under GPLv2 license. We only allow it free for personal and academic usage. 
-
-If you use any code of this repo in your academic research, please cite at least one of our papers:
-[1] Lin, Jiarong, et al. "Immesh: An immediate lidar localization and meshing framework." IEEE Transactions on Robotics
-   (T-RO 2023)
-[2] Yuan, Chongjian, et al. "Efficient and probabilistic adaptive voxel mapping for accurate online lidar odometry."
-    IEEE Robotics and Automation Letters (RA-L 2022)
-[3] Lin, Jiarong, and Fu Zhang. "R3LIVE: A Robust, Real-time, RGB-colored, LiDAR-Inertial-Visual tightly-coupled
-    state Estimation and mapping package." IEEE International Conference on Robotics and Automation (ICRA 2022)
-
-For commercial use, please contact me <ziv.lin.ljr@gmail.com> and Dr. Fu Zhang <fuzhang@hku.hk> to negotiate a 
-different license.
-
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
-
- 1. Redistributions of source code must retain the above copyright notice,
-    this list of conditions and the following disclaimer.
- 2. Redistributions in binary form must reproduce the above copyright notice,
-    this list of conditions and the following disclaimer in the documentation
-    and/or other materials provided with the distribution.
- 3. Neither the name of the copyright holder nor the names of its
-    contributors may be used to endorse or promote products derived from this
-    software without specific prior written permission.
-
- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- POSSIBILITY OF SUCH DAMAGE.
-*/
 #include "voxel_mapping.hpp"
 #include <opencv2/core/eigen.hpp>
 #include "image_frame.hpp"
+
+Eigen::Matrix3d   extR;
+Eigen::Vector3d   extT;
+Eigen::Matrix3d   cam_k;
+Eigen::Matrix<double, 3, 3, Eigen::RowMajor> camera_ext_R;
+Eigen::Matrix<double, 3, 1>  camera_ext_t;
 
 
 inline void image_equalize(cv::Mat &img, int amp)
@@ -364,8 +330,6 @@ void Voxel_mapping::livox_pcl_cbk( const livox_ros_driver::CustomMsg::ConstPtr &
     m_lidar_buffer.push_back( ptr );
     m_time_buffer.push_back( msg->header.stamp.toSec() );
     m_last_timestamp_lidar = msg->header.stamp.toSec();
-    LOG(INFO) << "[m_lidar_buffer] : " << m_lidar_buffer.size();
-    LOG(INFO) << "[m_time_buffer] : " << m_time_buffer.size();
     m_mutex_buffer.unlock();
     // m_sig_buffer 线程同步的条件变量 —— 通知其他所有需要使用这个数据的线程启动 (但是实际上其他部分没有使用这个数据)
     m_sig_buffer.notify_all();
@@ -430,16 +394,15 @@ void Voxel_mapping::image_cbk(const sensor_msgs::CompressedImageConstPtr &msg)
     cv_bridge::CvImagePtr cv_ptr_compressed = cv_bridge::toCvCopy( msg, sensor_msgs::image_encodings::BGR8 );
     double img_rec_time = msg->header.stamp.toSec();
     m_img = cv_ptr_compressed->image;
-
-     cv_ptr_compressed->image.release();
+    cv_ptr_compressed->image.release();
 
     // 对RGB图像去除畸变
     cv::remap( m_img, m_img, m_ud_map1, m_ud_map2, cv::INTER_LINEAR );
-
     cv::cvtColor(m_img, m_img_gray, cv::COLOR_RGB2GRAY);
     image_equalize(m_img_gray, 3.0);
     m_img = equalize_color_image_Ycrcb(m_img);
     // 设置数据值
+
     m_img_buffer.push_back(m_img);
     m_img_time_buffer.push_back(msg->header.stamp.toSec());
 
@@ -491,7 +454,6 @@ void Voxel_mapping::process_image(cv::Mat &temp_img, double msg_time)
 
     total_frame_count++;
 
-
     /////////////////////////////// 之前的第一帧处理结束之后,剩余部分对应的操作就是按照之前的去畸变 -> 数据送入到buffer中 /////////////////////////////////////
 }
 
@@ -500,13 +462,14 @@ int img_rej = 0;
 /* 只接收图像与lidar数据,并且在图像都是在lidar数据后面的*/
 bool Voxel_mapping::sync_packages( LidarMeasureGroup &meas )
 {
-    if ( m_lidar_buffer.empty() || m_img_buffer.empty() )
+    /* imu + lidar + camera 传感器下的数据集打包策略 */
+    if ( m_lidar_buffer.empty() || m_imu_buffer.empty() || m_img_buffer.empty() )
     {
-//        LOG(ERROR) << " lidar buffer of img buffer is empty ! " ;
+//        LOG(INFO) << " lidar buffer or img buffer or imu buffer is empty ! " ;
         return false;
     }
 
-    /*** push a lidar scan ***/
+    // 打包lidar数据 - 先将lidar数据提取出来
     if ( !m_lidar_pushed )
     {
         meas.lidar = m_lidar_buffer.front();
@@ -520,7 +483,14 @@ bool Voxel_mapping::sync_packages( LidarMeasureGroup &meas )
         m_lidar_pushed = true;
     }
 
-    // 小于lidar时间, 清空所有数据 | 图像buffer里面不包含时间信息
+
+    // m_last_timestamp_imu对应的是最后一帧imu数据的时间戳 | m_lidar_end_time对应的部分是一帧点云(加上其开始部分)最后对应的时间部分
+    if ( m_imu_en && m_last_timestamp_imu < m_lidar_end_time )
+    {
+        return false;
+    }
+
+    // 管理image | 小于lidar时间, 清空所有数据 | 图像buffer里面不包含时间信息
     if(m_last_timestamp_img < m_time_buffer.front())
     {
         m_img_buffer.clear();
@@ -549,12 +519,26 @@ bool Voxel_mapping::sync_packages( LidarMeasureGroup &meas )
                 struct MeasureGroup m;
                 m.img = m_img_buffer.front();
 
+                double imu_time = m_imu_buffer.front()->header.stamp.toSec();
+                m.imu.clear();
+
+                while ( ( !m_imu_buffer.empty() && ( imu_time < m_lidar_end_time ) ) )
+                {
+                    imu_time = m_imu_buffer.front()->header.stamp.toSec();
+                    if ( imu_time > m_lidar_end_time )
+                        break;
+                    m.imu.push_back( m_imu_buffer.front() );
+                    m_imu_buffer.pop_front();
+                }
+
                 // 只有所有的部分都完成了,才会继续进行处理
                 m_lidar_pushed = false;
                 m_lidar_buffer.pop_front();
                 m_time_buffer.pop_front();
                 m_img_buffer.pop_front();
                 m_img_time_buffer.pop_front();
+
+                m_sig_buffer.notify_all();
 
                 meas.is_lidar_end = true; // process lidar topic, so timestamp should be lidar scan end.
                 meas.measures.push_back( m );
@@ -566,8 +550,77 @@ bool Voxel_mapping::sync_packages( LidarMeasureGroup &meas )
             }
         }
         return false;
-
     }
+
+
+    /* image+lidar传感器下的数据集打包策略 */
+//    if ( m_lidar_buffer.empty() || m_img_buffer.empty() )
+//    {
+////        LOG(ERROR) << " lidar buffer of img buffer is empty ! " ;
+//        return false;
+//    }
+//
+//    /*** push a lidar scan ***/
+//    if ( !m_lidar_pushed )
+//    {
+//        meas.lidar = m_lidar_buffer.front();
+//        if ( meas.lidar->points.size() <= 1 )
+//        {
+//            m_lidar_buffer.pop_front();
+//            return false;
+//        }
+//        meas.lidar_beg_time = m_time_buffer.front();
+//        m_lidar_end_time = meas.lidar_beg_time + meas.lidar->points.back().curvature / double( 1000 );
+//        m_lidar_pushed = true;
+//    }
+//
+//    // 小于lidar时间, 清空所有数据 | 图像buffer里面不包含时间信息
+//    if(m_last_timestamp_img < m_time_buffer.front())
+//    {
+//        m_img_buffer.clear();
+//        m_img_time_buffer.clear();  // 时间戳与图像一起处理
+////        LOG(INFO) << "clear buffer";
+//        return false;
+//    }
+//    else
+//    {
+//        // 上面只是判断最后一帧图像，这里可能有多个图像在 m_img_buffer
+//        while( !m_img_time_buffer.empty())
+//        {
+//            auto i = m_img_time_buffer.front();
+//            // 之前的数据情况
+//            if( i < m_time_buffer.front())
+//            {
+//                img_rej++;
+//                m_img_buffer.pop_front();
+//                m_img_time_buffer.pop_front();
+////                LOG(INFO) << "pop front from buffer";
+//                continue;
+//            }
+//            else
+//            {
+//                // 组装LidarMeasurement
+//                struct MeasureGroup m;
+//                m.img = m_img_buffer.front();
+//
+//                // 只有所有的部分都完成了,才会继续进行处理
+//                m_lidar_pushed = false;
+//                m_lidar_buffer.pop_front();
+//                m_time_buffer.pop_front();
+//                m_img_buffer.pop_front();
+//                m_img_time_buffer.pop_front();
+//
+//                meas.is_lidar_end = true; // process lidar topic, so timestamp should be lidar scan end.
+//                meas.measures.push_back( m );
+////                cv::imshow("dfew", meas.measures.back().img);
+////                cv::waitKey(0);
+////                LOG(INFO) << "meas.measures.size(): " << meas.measures.size();
+////                LOG(INFO) << "Finish sync measurement and the number of rejected image is"<< img_rej;
+//                return true;
+//            }
+//        }
+//        return false;
+//    }
 }
 
 //    // 没有使用imu 读取lidar与camera数据
@@ -848,9 +901,7 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     nh.param< double >( "laser_point_cov", LASER_POINT_COV, 0.001 );
     nh.param< double >( "img_point_cov", IMG_POINT_COV, 1000 );
     nh.param< string >( "map_file_path", m_map_file_path, "" );
-    nh.param< string >( "common/lid_topic", m_lid_topic, "/velodyne_points" );
-    nh.param< string >( "common/imu_topic", m_imu_topic, "/livox/imu" );
-    m_imu_topic = "/livox/imu";
+
     nh.param< string >( "hilti/seq", m_hilti_seq_name, "01" );
     nh.param< bool >( "hilti/en", m_hilti_en, false );
 //    nh.param< string >( "camera/img_topic", m_img_topic, "/usb_cam/image_raw" );
@@ -880,7 +931,6 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     nh.param< double >( "preprocess/blind", m_p_pre->blind, 1 );
     nh.param< double >( "image_save/rot_dist", m_keyf_rotd, 0.01 );
     nh.param< double >( "image_save/pos_dist", m_keyf_posd, 0.01 );
-    nh.param< int >( "preprocess/lidar_type", m_p_pre->lidar_type, 2 );
     nh.param< int >( "preprocess/scan_line", m_p_pre->N_SCANS, 64 );
     nh.param< int >( "preprocess/timestamp_unit", m_p_pre->time_unit, US );
     nh.param< bool >( "preprocess/calib_laser", m_p_pre->calib_laser, true );
@@ -895,6 +945,7 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     ///////////////////////////// 注意这里的参数可能会在后面的部分被修改了 因为没有使用ros来读取yaml参数, 只好手动读取参数值 ///////////////////
     nh.param< vector< double > >( "mapping/extrinsic_T", m_extrin_T, vector< double >() );
     nh.param< vector< double > >( "mapping/extrinsic_R", m_extrin_R, vector< double >() );
+    // 后面的这两个参数应该没有被使用
     nh.param< vector< double > >( "camera/Pcl", m_camera_extrin_T, vector< double >() );
     nh.param< vector< double > >( "camera/Rcl", m_camera_extrin_R, vector< double >() );
 
@@ -916,39 +967,59 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
 
     /////////////////// 补充 /////////////////////////
     LOG(INFO) << "Loading camera parameter";
-    m_lid_topic = "/velodyne_points";
-    nh.param<string>("image/image_topic", m_img_topic, "/camera/color/image_raw/compressed" );
+
+    nh.param< string >( "common/lid_topic", m_lid_topic, "/livox/lidar" );
+    nh.param< string >( "common/imu_topic", m_imu_topic, "/livox/imu" );
+    nh.param< int >( "preprocess/lidar_type", m_p_pre->lidar_type, 1 );         // 1代表是avia雷达数据
+    m_lid_topic = "/livox/lidar";
+    //    m_lid_topic = "/velodyne_points";
+//    nh.param<string>("image/image_topic", m_img_topic, "/camera/color/image_raw/compressed" );
+    nh.param<string>("image/image_topic", m_img_topic, "/camera/image_color/compressed" );
     nh.param< int >( "img_used", m_img_en, 1 );
 
-    // 图像大小
-    int width = 640;
-    int height = 480;
     // 相机内参(后期可以更换成ros中读取参数)
     std::vector< double > camera_intrinsic_data, camera_dist_coeffs_data, camera_ext_R_data, camera_ext_t_data;
 
     /* m2DGR数据集 */
-    camera_intrinsic_data = { 617.971050917033,0.0,327.710279392468,
-                              0.0, 616.445131524790, 253.976983707814,
-                              0.0, 0.0, 1};
-    camera_dist_coeffs_data = { 0.148000794688248, -0.217835187249065, 0.0, 0.0 ,0.0};
-    // Lidar到camera的旋转+平移
-    camera_ext_R_data ={0, 0, 1,
-                        -1, 0, 0,
-                        0, -1, 0};
-
-    camera_ext_t_data = {0.30456, 0.00065, 0.65376};
+//    int width = 640;
+//    int height = 480;
+//    camera_intrinsic_data = { 617.971050917033,0.0,327.710279392468,
+//                              0.0, 616.445131524790, 253.976983707814,
+//                              0.0, 0.0, 1};
+//    camera_dist_coeffs_data = { 0.148000794688248, -0.217835187249065, 0.0, 0.0 ,0.0};
+//    // Lidar到camera的旋转+平移
+//    camera_ext_R_data ={0, 0, 1,
+//                        -1, 0, 0,
+//                        0, -1, 0};
+//
+//    camera_ext_t_data = {0.30456, 0.00065, 0.65376};
+//    m_extrin_R = {1,0,0,
+//                  0,1,0,
+//                  0,0,1};
+//    m_extrin_T = {0,0,0};
+    /*** /////////////////// ***/
 
     /*r3live数据集*/
-//    camera_intrinsic_data = { 863.4241, 0.0, 640.6808,
-//                              0.0,  863.4171, 518.3392,
-//                              0.0, 0.0, 1.0};
-//    camera_dist_coeffs_data = { -0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
-//    // Lidar到camera的旋转+平移
-//    camera_ext_R_data ={-0.00113207, -0.0158688, 0.999873,
-//                        -0.9999999,  -0.000486594, -0.00113994,
-//                        0.000504622,  -0.999874,  -0.0158682};
-//
-//    camera_ext_t_data = {0.0, 0.0, 0.0};
+    int width = 1280;
+    int height = 1024;
+    camera_intrinsic_data = { 863.4241, 0.0, 640.6808,
+                              0.0,  863.4171, 518.3392,
+                              0.0, 0.0, 1.0};
+    camera_dist_coeffs_data = { -0.1080, 0.1050, -1.2872e-04, 5.7923e-05, -0.0222};
+    // Lidar到camera的旋转+平移
+    camera_ext_R_data ={-0.00113207, -0.0158688, 0.999873,
+                        -0.9999999,  -0.000486594, -0.00113994,
+                        0.000504622,  -0.999874,  -0.0158682};
+
+    camera_ext_t_data = {0.0, 0.0, 0.0};
+    /*** lidar转换到imu ***/
+    m_extrin_R = {1,0,0,
+                  0,1,0,
+                  0,0,1};
+
+    m_extrin_T = {0.04165, 0.02326, -0.0284};
+
+    /*** /////////////////// ***/
 
     /*Global中的类成员读取参数 */
     m_camera_intrinsic = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_intrinsic_data.data() );
@@ -957,11 +1028,11 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     m_camera_ext_R = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_ext_R_data.data() );
     m_camera_ext_t = Eigen::Map< Eigen::Matrix< double, 3, 1 > >( camera_ext_t_data.data() );
 
-    /*** lidar转换到imu ***/
-    m_extrin_R = {1,0,0,
-                  0,1,0,
-                  0,0,1};
-    m_extrin_T = {0,0,0};
+//    /*** lidar转换到imu ***/
+//    m_extrin_R = {1,0,0,
+//                  0,1,0,
+//                  0,0,1};
+//    m_extrin_T = {0,0,0};
 
     cv::eigen2cv(m_camera_intrinsic, intrinsic);
     cv::eigen2cv(m_camera_dist_coeffs, dist_coeffs);
@@ -981,7 +1052,7 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     LOG(INFO) << "Subscribing to topic: " << m_lid_topic.c_str();
     LOG(INFO) << "Subscribing to topic: " << m_imu_topic.c_str();
     LOG(INFO) << "Subscribing to topic: " << m_img_topic.c_str();
-
+    LOG(INFO) << "m_p_pre->lidar_type" << m_p_pre->lidar_type;
 
     cout << "[Ros_parameter]: Camera Intrinsic: " << endl;
     cout << m_camera_intrinsic << endl;
@@ -995,6 +1066,17 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     cout << "Ranging cov:" << m_dept_err << " , angle cov:" << m_beam_err << std::endl;
     cout << "Meshing distance scale:" << m_meshing_distance_scale << " , points minimum scale:" << m_meshing_points_minimum_scale << std::endl;
 
+    //// 将部分内外参数据直接给Global map ( 因为之前的投影线程是在voxelmap中，而且验证了其在r3live的数据集中是可以使用的, 这里直接给Global map赋值) )
+//    g_map_rgb_pts_mesh.m_extR << MAT_FROM_ARRAY( m_extrin_R );
+//    g_map_rgb_pts_mesh.m_extT << VEC_FROM_ARRAY( m_extrin_T );
+//    g_map_rgb_pts_mesh.m_camera_ext_R = m_camera_ext_R;
+//    g_map_rgb_pts_mesh.m_camera_ext_t = m_camera_ext_t;
+
+    extR << MAT_FROM_ARRAY( m_extrin_R );
+    extT << VEC_FROM_ARRAY( m_extrin_T );
+    camera_ext_R = m_camera_ext_R;
+    camera_ext_t = m_camera_ext_t;
+    cam_k = g_cam_k;
 }
 
 void Voxel_mapping::transformLidar( const Eigen::Matrix3d rot, const Eigen::Vector3d t, const PointCloudXYZI::Ptr &input_cloud,

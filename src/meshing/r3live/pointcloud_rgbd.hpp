@@ -193,7 +193,8 @@ class RGB_Voxel
     vec_3                     m_short_axis;
     long                      m_meshing_times = 0;
     long                      m_new_added_pts_count = 0;
-    std::vector< RGB_pt_ptr > m_pts_in_grid;
+    std::vector< RGB_pt_ptr > m_pts_in_grid;    // 一个RGB_voxel中的所有点的储存器
+    // 这个数据实际上也没有被使用
     std::vector< Common_tools::Triangle_2 >      m_2d_pts_vec;
     // Triangle_set                           m_triangle_list_in_voxel;
    
@@ -252,7 +253,7 @@ struct Global_map
     int                       m_map_major_version = R3LIVE_MAP_MAJOR_VERSION;
     int                       m_map_minor_version = R3LIVE_MAP_MINOR_VERSION;
     int                       m_if_get_all_pts_in_boxes_using_mp = 1;
-    std::vector< RGB_pt_ptr > m_rgb_pts_vec;
+    std::vector< RGB_pt_ptr > m_rgb_pts_vec;        // 地图中所有的RGB_pts的储存器
     std::vector< RGB_voxel_ptr > m_voxel_vec;
     // std::vector< RGB_pt_ptr >                    m_rgb_pts_in_recent_visited_voxels;
     std::shared_ptr< std::vector< RGB_pt_ptr > > m_pts_rgb_vec_for_projection = nullptr;
@@ -312,9 +313,13 @@ struct Global_map
     cv::Mat m_ud_map1, m_ud_map2;
     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_intrinsic;
     Eigen::Matrix<double, 5, 1> m_camera_dist_coeffs;
+    cv::Mat intrinsic, dist_coeffs;
+
+
+    Eigen::Vector3d m_extT;
+    Eigen::Matrix3d m_extR;
     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> m_camera_ext_R;
     Eigen::Matrix<double, 3, 1> m_camera_ext_t;
-    cv::Mat intrinsic, dist_coeffs;
 
     std::mutex g_mutex_render;
     double m_camera_start_ros_tim = -3e8;
@@ -322,6 +327,7 @@ struct Global_map
     void init_ros_node();
     void read_ros_parameters(ros::NodeHandle &nh);
     void service_pub_rgb_maps();
+
     //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   private:

@@ -60,6 +60,7 @@ class Triangle_facet_shader
     std::shared_ptr< Shader > m_shader_facet;
     std::vector< vec_3f >     m_pts_pos_vector;
     std::vector< vec_3f >     m_pts_normal_vector;
+    // 这里对应的数据 m_pts_color_vector 貌似并不是一种直接输出的结果 是一个16进制数的颜色值
     std::vector< float >      m_pts_color_vector;
     bool                      m_if_draw_face = true;
     unsigned int              m_vbo[ 3 ], m_vao;
@@ -144,6 +145,7 @@ class Triangle_facet_shader
         m_pts_pos_vector.resize(_pts_pos.size());
         m_pts_normal_vector.resize(_pts_pos.size());
         m_pts_color_vector.resize( _pts_pos.size() );
+        // 每三个点处理一次
         for ( int i = 0; i < _pts_pos.size(); i+=3 )
         {
             vec_3f normal = ( _pts_pos[ i + 1 ] - _pts_pos[ i ] ).cross( _pts_pos[ i + 2 ] - _pts_pos[ i ] );

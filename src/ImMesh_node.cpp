@@ -79,6 +79,9 @@ std::vector< GLuint >      g_texture_id_vec;
 long                       img_width = 0, img_heigh = 0;
 
 LiDAR_frame_pts_and_pose_vec g_eigen_vec_vec;
+//// 补充数据 /////
+LiDAR_color_frame_pts_and_pose_vec g_eigen_color_vec_vec;
+/////////////////
 bool                         g_flag_pause = false;
 int                          if_first_call = 1;
 
@@ -267,7 +270,7 @@ int main( int argc, char **argv )
     m_depth_view_camera.m_if_draw_depth_pts = true;
     vec_3 ext_rot_angle = vec_3( 0, 0, 0 );
 
-//     剩余只与 openGL 显示结果相关
+    // 剩余只与 openGL 显示结果相关 | 这里对应的g_current_frame竟然是在mesh重建的线程中进行修改的
     while ( !glfwWindowShouldClose( window ) )
     {
         g_gl_camera.draw_frame_start();
@@ -398,6 +401,7 @@ int main( int argc, char **argv )
             {
                 if ( m_depth_view_camera.m_draw_LiDAR_pts_size > 0 )
                 {
+                    // 这里相当于是直接进行的openGL中的点云的渲染 ——对应的点云是是当前帧的点云数据 —— 颜色的设置是直接读取color数据中的前三维
                     display_current_LiDAR_pts( g_current_frame, m_depth_view_camera.m_draw_LiDAR_pts_size, vec_4f( 1.0, 1.0, 1.0, 0.85 ) );
                 }
                 display_reinforced_LiDAR_pts( m_depth_view_camera.m_depth_pts_vec, m_depth_view_camera.m_draw_depth_pts_size, vec_3f( 1.0, 0.0, 1.0 ) );
@@ -432,12 +436,13 @@ int main( int argc, char **argv )
                                         Common_tools::eigen2glm( g_gl_camera.m_gl_cam.m_camera_pose_mat44_inverse ) );
         }
 
-        // 感觉与mesh有关的部分 只有这里能启动整个的重建部分
+        // ImGUI的核心部分 - 负责整个mesh图的显示工作
         if ( g_display_mesh )
         {
             draw_triangle( g_gl_camera.m_gl_cam );
         }
 
+        /// @attention 只有这里的camera才是openGL中的真实存在camera部分 - 是直接用每一次当前帧的位姿直接输出的
         if ( g_current_frame >= 0 )
         {
             draw_camera_pose( g_current_frame, g_draw_path_size, g_display_camera_size );
@@ -495,6 +500,7 @@ int main( int argc, char **argv )
             g_display_help_win = !g_display_help_win;
         }
 
+        /// @bug 这部分的核心作用是对openGL中的窗口进行刷新 | 没有这个部分拖动窗口时不会有展示部分的刷新的 | 并且openGL中提到的camera这里并不是真实的camera,这里指的是openGL中的2D屏幕
         g_gl_camera.set_gl_camera_pose_matrix();
         g_gl_camera.draw_frame_finish();
     }

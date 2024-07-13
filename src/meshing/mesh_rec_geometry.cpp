@@ -137,10 +137,10 @@ extern std::mutex           dbg_line_mutex;
 /// @brief
 /*
  * (1) remove_triangles:当前所有的
- * (2) add_triangles:新找到的三角
- * (3) res_remove_triangles:需要被移除的三角
- * (4) res_add_triangles:真正需要被添加的三角
- * (5) exist_triangles:存在的三角
+ * (2) add_triangles: 新生成的三角(这里是将一个voxel的所有点都构建triangle, 所以其对应的部分应该全部都是)
+ * (3) res_remove_triangles: 需要被移除的三角
+ * (4) res_add_triangles: 真正需要被添加的三角
+ * (5) exist_triangles: 之前存在的三角
  * */
 
 void triangle_compare( const Triangle_set &remove_triangles, const std::vector< long > &add_triangles, Triangle_set &res_remove_triangles,
@@ -151,7 +151,7 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
 
     for ( const Triangle_ptr &tri_ptr : remove_triangles )
     {
-        // 设置为true,即代表需要被增加
+        // 设置为true, 即代表需要被增加
         all_remove_triangles_list.insert( tri_ptr->m_tri_pts_id[ 0 ], tri_ptr->m_tri_pts_id[ 1 ], tri_ptr->m_tri_pts_id[ 2 ],
                                           std::make_pair( tri_ptr, true ) );
     }
@@ -187,8 +187,9 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
 }
 
 
-/// @brief 整个voxel中的点云以及voxel外围的一部分邻居点云 | 需要计算投影平面, 又生成convex_hull_index(凸包)以及inner_hull_index(内部点)进行处理
+/// @brief 整个voxel中的点云以及voxel外围的一部分邻居点云 | 需要计算投影平面, 又生成convex_hull_index(凸包)以及inner_hull_index(内部点)进行处理 - 但点是convex或者是inner点与最后生成的三角形无关(闭包或者内部点都会用于三角mesh的生成)
     // 关于轴的计算分为长轴 | 中轴 | 短轴三个轴 —— 具体是根据哪一个轴上面的点云数据分布的广来区分的
+    // 目前来看, 这个函数中最重要的是应该是返回值 tri_rgb_pt_indices
 std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_vec, vec_3 &long_axis, vec_3 &mid_axis, vec_3 &short_axis,
                                                 std::set< long > &convex_hull_index, std::set< long > &inner_hull_index )
 {
@@ -205,10 +206,9 @@ std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_ve
     }
     for ( int i = 0; i < rgb_pt_vec.size(); i++ )
     {
-        pc_mat.row( i ) = rgb_pt_vec[ i ]->get_pos();
+        pc_mat.row( i ) = rgb_pt_vec[ i ]->get_pos();    // 转eigen矩阵
     }
 
-    // 转换成eigen信息再进行转换
     vec_3           pc_center = pc_mat.colwise().mean().transpose();
     Eigen::MatrixXd pt_sub_center = pc_mat.rowwise() - pc_center.transpose();
 
@@ -232,9 +232,11 @@ std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_ve
         long_axis = short_axis.cross( mid_axis );
     }
 
+    /*** 后面对应的应该是调用CGAL库中的函数进行三角剖分 ***/
     tim.tic();
     std::vector< std::pair< Common_tools::D2_Point, long > > points;
     points.resize( rgb_pt_vec.size() );
+    // pts_for_hull 保留的投影点
     std::vector< Common_tools::D2_Point > pts_for_hull( rgb_pt_vec.size() );
     std::vector< std::size_t >            indices( pts_for_hull.size() );
     int                                   avail_idx = 0;
@@ -245,6 +247,8 @@ std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_ve
         // {
         //     continue;
         // }
+
+        // 计算投影点 并且组装起来
         Common_tools::D2_Point cgal_pt = Common_tools::D2_Point( pt_sub_center.row( i ).dot( long_axis ), pt_sub_center.row( i ).dot( mid_axis ) );
         points[ avail_idx ] = std::make_pair( cgal_pt, rgb_pt_vec[ i ]->m_pt_index );
         pts_for_hull[ avail_idx ] = cgal_pt;
@@ -253,6 +257,7 @@ std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_ve
     points.resize( avail_idx );
     pts_for_hull.resize( avail_idx );
 
+    // 自动给indices这个序列赋值为0,1,2,3,...
     std::iota( indices.begin(), indices.end(), 0 );
     std::vector< std::size_t > out;
     if ( 1 )
@@ -271,10 +276,13 @@ std::vector< long > delaunay_triangulation( std::vector< RGB_pt_ptr > &rgb_pt_ve
             }
         }
     }
+
+    /*** tri_rgb_pt_indices作为返回值 ***/
     Common_tools::Delaunay2 T;
     T.insert( points.begin(), points.end() );
     Common_tools::Delaunay2::Finite_faces_iterator fit;
     Common_tools::Delaunay2::Face                  face;
+
     if ( T.number_of_faces() == 0 )
     {
         return tri_rgb_pt_indices;
@@ -419,15 +427,20 @@ std::vector< RGB_pt_ptr > remove_outlier_pts( const std::vector< RGB_pt_ptr > &r
     return res_pt_vec;
 }
 
+/// @brief 这部分是针对mesh结果的法向量进行操作 | 因为实际在GUI进行显示的时候, 这个mesh是通过CGAL库实现的(应该包含了面对应的法向量信息) | openGL中会利用这个法向量进行渲染(这里通过翻转一些mesh面的法向量来保证对应的平面都是朝向相机的-提升渲染效果)
+    // 在许多图形API中，默认不渲染面向远离摄像机的面 - 我们这里的mesh只考虑一个方向的面
 void correct_triangle_index( Triangle_ptr &ptr, const vec_3 &camera_center, const vec_3 &_short_axis )
 {
+    // 获取三个顶点的位置信息
     vec_3 pt_a = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 0 ] ]->get_pos( 1 );
     vec_3 pt_b = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 1 ] ]->get_pos( 1 );
     vec_3 pt_c = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 2 ] ]->get_pos( 1 );
+    // 生成两个顶点向量
     vec_3 pt_ab = pt_b - pt_a;
     vec_3 pt_ac = pt_c - pt_a;
     vec_3 pt_tri_cam = camera_center - pt_a;
     vec_3 short_axis = _short_axis;
+    // 计算法向量
     ptr->m_normal = pt_ab.cross( pt_ac );
     if ( ptr->m_normal.norm() != 0 )
     {

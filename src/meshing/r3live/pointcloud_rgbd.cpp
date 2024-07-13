@@ -243,6 +243,8 @@ int RGB_pts::update_rgb(const vec_3 &rgb, const double obs_dis, const vec_3 obs_
 //    return 1;
 //}
 
+
+// 后面是原作者自己注释的部分
 // void RGB_Voxel::refresh_triangles()
 // {
 
@@ -589,6 +591,7 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
 
         std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
         pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
+        // 直接按照当前点云的size作为下一个点的id
         pt_rgb->m_pt_index = m_rgb_pts_vec.size();
         kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
         m_rgb_pts_vec.push_back( pt_rgb );
@@ -695,7 +698,7 @@ extern double        g_maximum_pe_error;
 static inline double thread_render_pts_in_voxel( const int& pt_start, const int& pt_end, const std::shared_ptr< Image_frame >& img_ptr,
                                                  const std::vector< RGB_voxel_ptr >* voxels_for_render, const double obs_time )
 {
-    LOG(INFO) << "[thread_render_pts_in_voxel]: voxels_for_render size " << voxels_for_render->size();
+//    LOG(INFO) << "[thread_render_pts_in_voxel]: voxels_for_render size " << voxels_for_render->size();
     vec_3 pt_w;
     vec_3 rgb_color;
     double u, v;
@@ -731,7 +734,7 @@ static inline double thread_render_pts_in_voxel( const int& pt_start, const int&
             }
         }
     }
-    LOG(INFO) << "Finish this rendering process" ;
+//    LOG(INFO) << "Finish this rendering process" ;
     double cost_time = tim.toc() * 100;
     return cost_time;
 //    LOG(INFO) << "[thread_render_pts_in_voxel]: voxels_for_render size " << voxels_for_render->size();
@@ -839,10 +842,10 @@ void render_pts_in_voxels_mp( std::shared_ptr< Image_frame >& img_ptr, std::unor
     if ( USING_OPENCV_TBB )
     {
         LOG(INFO) << "prepare multi-thread to process the rendering work";
-//        cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
-//                           [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, img_ptr, &g_voxel_for_render, obs_time ); } );
+        cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
+                           [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, img_ptr, &g_voxel_for_render, obs_time ); } );
         /// @attention 原版的程序在渲染点云上就没有问题 | 只是在immesh中的record的部分有问题的(使用这个部分会导致段错误) | 注意这里发布RGB点云是另一个线程进行处理的
-        thread_render_pts_in_voxel(0, numbers_of_voxels , img_ptr, &g_voxel_for_render, obs_time);
+//        thread_render_pts_in_voxel(0, numbers_of_voxels , img_ptr, &g_voxel_for_render, obs_time);
     }
     else
     {
@@ -1251,6 +1254,8 @@ void Global_map::service_pub_rgb_maps()
 //        LOG(INFO) << "m_rgb_pts_vec.size()" << m_rgb_pts_vec.size();
         int pts_size = m_rgb_pts_vec.size();            // 获取Global_map中的数据
 
+
+
         /// @bug 这里频繁地访问数据难道不需要上锁么
         while(!m_rgb_pts_vec.size())
         {
@@ -1287,7 +1292,7 @@ void Global_map::service_pub_rgb_maps()
             {
                 pub_idx_size = 0;
                 pcl::toROSMsg( pc_rgb, ros_pc_msg );
-                ros_pc_msg.header.frame_id = "world";
+                ros_pc_msg.header.frame_id = "odom";
                 ros_pc_msg.header.stamp = ros::Time::now();
 
 //                LOG(INFO) << "cur_topic_idx: " << cur_topic_idx;
@@ -1307,7 +1312,7 @@ void Global_map::service_pub_rgb_maps()
 
         pc_rgb.resize( pub_idx_size );
         pcl::toROSMsg( pc_rgb, ros_pc_msg );
-        ros_pc_msg.header.frame_id = "world";
+        ros_pc_msg.header.frame_id = "odom";
         ros_pc_msg.header.stamp = ros::Time::now();
 
         if ( m_pub_rgb_render_pointcloud_ptr_vec[ cur_topic_idx ] == nullptr )
@@ -1327,6 +1332,6 @@ void Global_map::service_pub_rgb_maps()
             number_of_pts_per_topic *= 1.5;
             sleep_time_aft_pub *= 1.5;
         }
-        LOG(INFO) << "Finish the rendering process";
+        LOG(INFO) << "[service_pub_rgb_maps] publish";
     }
 }

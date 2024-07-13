@@ -161,9 +161,12 @@ struct Region_triangles_shader
     {
         if ( m_need_init_shader )
         {
+            // 创建 vertex 以及 fragment 进行处理
             init_openGL_shader();
             m_need_init_shader = false;
         }
+
+        // m_triangle_pt_vec对应的数据进行openGL的展示 | 创建这些数据在main函数中启动的线程中 (service_refresh_and_synchronize_triangle)
         if ( m_triangle_pt_vec.size() < 3 )
         {
             return;
@@ -183,6 +186,7 @@ void display_current_LiDAR_pts( int current_frame_idx, double pts_size, vec_4f c
     {
         return;
     }
+    // 通过修改
     g_LiDAR_point_shader.set_point_attr( pts_size );
     g_LiDAR_point_shader.set_pointcloud( g_eigen_vec_vec[ current_frame_idx ].first, vec_3( 1.0, 1.0, 1.0 ) );
     g_LiDAR_point_shader.draw( g_gl_camera.m_gl_cam.m_glm_projection_mat,
@@ -229,7 +233,6 @@ std::vector< vec_3 > pt_camera_traj;
 
 void synchronize_triangle_list_for_disp()
 {
-
     // 对应的所有需要被更新的triangle信息
     int region_size = g_triangles_manager.m_triangle_set_vector.size();
     bool if_force_refresh = g_force_refresh_triangle;
@@ -293,6 +296,7 @@ void draw_triangle( const Cam_view &gl_cam )
     {
         g_region_triangles_shader_vec[ region_idx ]->m_triangle_facet_shader.m_if_draw_face = g_display_face;
         g_region_triangles_shader_vec[ region_idx ]->m_if_set_color = g_mesh_if_color;
+        // draw是自定义的一个函数，是mesh重建的关键
         g_region_triangles_shader_vec[ region_idx ]->draw( gl_cam );
     }
 }
@@ -316,6 +320,8 @@ void draw_camera_pose( int current_frame_idx, float pt_disp_size, float display_
     Eigen::Quaterniond pose_q( g_eigen_vec_vec[ current_frame_idx ].second.head< 4 >() );
     vec_3              pose_t = g_eigen_vec_vec[ current_frame_idx ].second.block( 4, 0, 3, 1 );
     mat_3_3            lidar_frame_to_camera_frame;
+
+    // 这里对应的lidar到camera的转换作用没看懂 - 最多就是实现显示上的处理效果
     lidar_frame_to_camera_frame << 0, 0, 1, -1, 0, 0, 0, -1, 0;
     pose_q = Eigen::Quaterniond( pose_q.toRotationMatrix() * lidar_frame_to_camera_frame );
 

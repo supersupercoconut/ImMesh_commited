@@ -18,6 +18,7 @@
 #include <glog/logging.h>
 #include <ImMesh/cloud_voxel.h>
 #include "pointcloud_rgbd.hpp"
+#include <functional>
 
 #define INIT_TIME ( 0.0 )
 #define MAXN ( 360000 )
@@ -51,6 +52,12 @@ extern std::list< Point_clouds_color_data_package >          g_rec_color_data_pa
 extern Global_map       g_map_rgb_pts_mesh;
 //extern std::thread *g_color_point_thr;
 extern std::unique_ptr<std::thread> g_color_point_thr;
+
+extern Eigen::Matrix3d   extR;
+extern Eigen::Vector3d   extT;
+extern Eigen::Matrix<double, 3, 3, Eigen::RowMajor> camera_ext_R;
+extern Eigen::Matrix<double, 3, 1>  camera_ext_t;
+extern Eigen::Matrix3d cam_k;
 /////////////////////////////////////////////////////////////////////////////
 
 #define time_debug
@@ -133,7 +140,7 @@ class Voxel_mapping
     // mutex mtx_buffer_pointcloud;
 
     string m_root_dir = ROOT_DIR;
-    string m_map_file_path, m_lid_topic = "/velodyne_points", m_imu_topic = "/livox/imu", m_hilti_seq_name = "01", m_config_file;
+    string m_map_file_path, m_lid_topic, m_imu_topic, m_hilti_seq_name = "01", m_config_file;
     M3D    Eye3d = M3D::Identity();
     M3F    Eye3f = M3F::Identity();
     V3D    Zero3d = V3D::Zero();

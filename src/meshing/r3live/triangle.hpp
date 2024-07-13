@@ -119,6 +119,7 @@ class Triangle_manager
 {
   public:
     Global_map*                             m_pointcloud_map = nullptr;
+    // 当前所有的triangle都在这里被保存
     Hash_map_3d< int, Triangle_ptr >        m_triangle_hash;
     double                                  m_region_size = 10.0;
     std::vector< Sync_triangle_set* >            m_triangle_set_vector;     // 对 三角部分set的一个向量
@@ -339,7 +340,8 @@ class Triangle_manager
         ids[ 0 ] = id_0;
         ids[ 1 ] = id_1;
         ids[ 2 ] = id_2;
-        std::sort( std::begin( ids ), std::end( ids ) );
+        std::sort( std::begin( ids ), std::end( ids ) );    // 将三个顶点的出现顺序进行修改 - 这样后续用hash表或者其他操作的时候, 都具有唯一的顺序
+
         Triangle_ptr triangle_ptr;
         if ( m_triangle_hash.if_exist( ids[ 0 ], ids[ 1 ], ids[ 2 ] ) )
         {

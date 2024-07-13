@@ -32,6 +32,13 @@
 #define NUMBER_OF_POSE_SIZE -1
 typedef std::vector< std::pair< std::vector< vec_4 >, Eigen::Matrix< double, NUMBER_OF_POSE_SIZE, 1 > > > LiDAR_frame_pts_and_pose_vec;
 
+
+//////// 自定义的数据结构 /////////
+typedef std::vector< std::pair< std::vector< vec_7 >, Eigen::Matrix< double, NUMBER_OF_POSE_SIZE, 1 > > > LiDAR_color_frame_pts_and_pose_vec;   // 定义一帧的RGB点云数据 并且保存
+
+///////////////////////////////
+
+
 typedef CGAL::Exact_predicates_inexact_constructions_kernel                     K;
 
 typedef pcl::PointXYZINormal  PointType ;
