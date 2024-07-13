@@ -124,6 +124,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         g_eigen_vec_vec[ frame_idx ].first.emplace_back( frame_pts->points[ i ].x, frame_pts->points[ i ].y, frame_pts->points[ i ].z,
                                                          frame_pts->points[ i ].intensity );
     }
+    g_eigen_vec_vec[ frame_idx ].second = pose_vec;
 
 
     int append_point_step = std::max( ( int ) 1, ( int ) std::round( frame_pts->points.size() / appending_pts_frame ) );
@@ -176,6 +177,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     }
 
 
+
     /*** 完成render之后的mesh重建过程 ***/
     std::atomic< int >    voxel_idx( 0 );
     std::mutex mtx_triangle_lock, mtx_single_thr;
@@ -187,6 +189,8 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     tim.tic();
     tim_total.tic();
 
+
+    LOG(INFO) << "voxels_recent_visited: " << voxels_recent_visited->size();
     try
     {
         /// @attention Cpp的并行计算库tbb(又相当于是创建了新的多个线程来处理数据) | parallel_for_each 需要指定一个搜索范围+一个lambda表达式 | lambda的形参 对应就是从voxels_recent_visited取出来的voxel数据
@@ -240,7 +244,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             }
 
             std::set< long > convex_hull_index, inner_pts_index;
-            // mtx_triangle_lock.lock();
+//          //   mtx_triangle_lock.lock();
 
 
             /*** 三角剖分 ***/
@@ -253,8 +257,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             voxel->m_short_axis.setZero();
             std::vector< long > add_triangle_idx = delaunay_triangulation( pts_in_voxels, voxel->m_long_axis, voxel->m_mid_axis,
                                                                            voxel->m_short_axis, convex_hull_index, inner_pts_index );
-
-            // 当前 pts_in_voxels 已经是包含了在其他voxel中的点 | 这里在全局地图中设置点属于哪一个voxel (而没有在RGB_Voxel中放入其他voxel中的点)
+//            // 当前 pts_in_voxels 已经是包含了在其他voxel中的点 | 这里在全局地图中设置点属于哪一个voxel (而没有在RGB_Voxel中放入其他voxel中的点)
             for ( auto p : inner_pts_index )
             {
                 if ( voxel->if_pts_belong_to_this_voxel( g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ] ) )
@@ -278,19 +281,19 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             // Voxel-wise mesh commit(所有应该构建出来的Mesh与已经存在的mesh对比)
             triangle_compare( triangles_sets, add_triangle_idx, triangles_to_remove, triangles_to_add, &existing_triangle );
 
-            // Refine normal index - 将新增的triangle以及已经存在的triangle进行修正
+            // Refine normal index - 将新增的triangle以及已经存在的triangle进行修正、
             for ( auto triangle_ptr : triangles_to_add )
             {
                 // 使用g_eigen_vec_vec的位姿信息 - 即对应了在GUI做展示的时候 实际运行出来的实际 camera 的位姿信息 | 短轴部分对应的应该是2D投影平面上的法向量
                 correct_triangle_index( triangle_ptr, g_eigen_vec_vec[ frame_idx ].second.block( 4, 0, 3, 1 ), voxel->m_short_axis );
             }
+
             for ( auto triangle_ptr : existing_triangle )
             {
                 correct_triangle_index( triangle_ptr, g_eigen_vec_vec[ frame_idx ].second.block( 4, 0, 3, 1 ), voxel->m_short_axis );
             }
 
             std::unique_lock< std::mutex > lock( mtx_triangle_lock );
-
             // 这里只是做了关于add与remove的整理 将一个voxel与其对应的triangle进行了整理 | 具体要处理的部分还是要在pull模块处理掉
             removed_triangle_list.emplace( std::make_pair( voxel, triangles_to_remove ) );
             added_triangle_list.emplace( std::make_pair( voxel, triangles_to_add ) );
@@ -319,7 +322,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     }
     LOG(INFO) << "[incremental_mesh_reconstruction]: The count of deleted triangle is "<< total_delete_triangle;
 
-    /// @attention 每一个voxel中
+    /// @attention 每一个voxel中的triangle集合
     for ( auto &triangle_list : added_triangle_list )
     {
         Triangle_set triangle_idx = triangle_list.second;
@@ -333,11 +336,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         }
     }
     LOG(INFO) << "[incremental_mesh_reconstruction]: The count of added triangle is "<< total_add_triangle;
-
     g_mutex_reconstruct_mesh.unlock();
-
-
-
 
     if ( g_fp_cost_time )
     {
@@ -640,13 +639,12 @@ void service_reconstruct_mesh()
                 /// @attention 这里说的是某一个空闲线程来接受这个任务而不是所有的线程都在执行这个函数
 //                g_thread_pool_rec_mesh->commit_task( incremental_mesh_reconstruction, data_pack_front.m_frame_pts, data_pack_front.m_pose_q,
 //                                                     data_pack_front.m_pose_t, data_pack_front.m_frame_idx );
-
-//                g_thread_pool_rec_mesh->commit_task( std::bind(incremental_mesh_reconstruction,
-//                                                               data_pack_front.m_frame_pts,
-//                                                               data_pack_front.m_img,  // 添加 img 参数
-//                                                               data_pack_front.m_pose_q,
-//                                                               data_pack_front.m_pose_t,
-//                                                               data_pack_front.m_frame_idx) );
+//                g_thread_pool_rec_mesh->commit_task([&]() {
+//                    incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
+//                                                    data_pack_front.m_pose_q,
+//                                                    data_pack_front.m_pose_t,
+//                                                    data_pack_front.m_frame_idx);
+//                });
 
                 /// @bug 全靠gpt修改出来的代码 神奇 本来我都想去不再使用这个线程池,直接处理数据了
                 g_thread_pool_rec_mesh->commit_task([&]() {

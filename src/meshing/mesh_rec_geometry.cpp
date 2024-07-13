@@ -146,22 +146,17 @@ extern std::mutex           dbg_line_mutex;
 void triangle_compare( const Triangle_set &remove_triangles, const std::vector< long > &add_triangles, Triangle_set &res_remove_triangles,
                                  Triangle_set &res_add_triangles, Triangle_set *exist_triangles )
 {
-
     Hash_map_3d< long, std::pair< Triangle_ptr, bool > > all_remove_triangles_list;
-
     for ( const Triangle_ptr &tri_ptr : remove_triangles )
     {
-        // 设置为true, 即代表需要被增加
         all_remove_triangles_list.insert( tri_ptr->m_tri_pts_id[ 0 ], tri_ptr->m_tri_pts_id[ 1 ], tri_ptr->m_tri_pts_id[ 2 ],
                                           std::make_pair( tri_ptr, true ) );
     }
     for ( int i = 0; i < add_triangles.size(); i += 3 )
     {
-        // 新三角
         Triangle                         tri( add_triangles[ i ], add_triangles[ i + 1 ], add_triangles[ i + 2 ] );
-
         std::pair< Triangle_ptr, bool > *temp_pair_ptr =
-            all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
+                all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
         if ( temp_pair_ptr != nullptr )
         {
             temp_pair_ptr->second = false;
@@ -178,12 +173,50 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
 
     for ( auto &it : all_remove_triangles_list.m_map_3d_hash_map )
     {
-        // 这里就是上面bool进行赋值的true或者false
         if ( it.second.second )
         {
             res_remove_triangles.insert( it.second.first );
         }
     }
+
+
+//    Hash_map_3d< long, std::pair< Triangle_ptr, bool > > all_remove_triangles_list;
+//
+//    for ( const Triangle_ptr &tri_ptr : remove_triangles )
+//    {
+//        // 设置为true, 即代表需要被增加
+//        all_remove_triangles_list.insert( tri_ptr->m_tri_pts_id[ 0 ], tri_ptr->m_tri_pts_id[ 1 ], tri_ptr->m_tri_pts_id[ 2 ],
+//                                          std::make_pair( tri_ptr, true ) );
+//    }
+//    for ( int i = 0; i < add_triangles.size(); i += 3 )
+//    {
+//        // 新三角
+//        Triangle                         tri( add_triangles[ i ], add_triangles[ i + 1 ], add_triangles[ i + 2 ] );
+//
+//        std::pair< Triangle_ptr, bool > *temp_pair_ptr =
+//            all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
+//        if ( temp_pair_ptr != nullptr )
+//        {
+//            temp_pair_ptr->second = false;
+//            if ( exist_triangles != nullptr )
+//            {
+//                exist_triangles->insert( temp_pair_ptr->first );
+//            }
+//        }
+//        else
+//        {
+//            res_add_triangles.insert( std::make_shared< Triangle >( tri ) );
+//        }
+//    }
+//
+//    for ( auto &it : all_remove_triangles_list.m_map_3d_hash_map )
+//    {
+//        // 这里就是上面bool进行赋值的true或者false
+//        if ( it.second.second )
+//        {
+//            res_remove_triangles.insert( it.second.first );
+//        }
+//    }
 }
 
 
@@ -431,16 +464,13 @@ std::vector< RGB_pt_ptr > remove_outlier_pts( const std::vector< RGB_pt_ptr > &r
     // 在许多图形API中，默认不渲染面向远离摄像机的面 - 我们这里的mesh只考虑一个方向的面
 void correct_triangle_index( Triangle_ptr &ptr, const vec_3 &camera_center, const vec_3 &_short_axis )
 {
-    // 获取三个顶点的位置信息
     vec_3 pt_a = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 0 ] ]->get_pos( 1 );
     vec_3 pt_b = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 1 ] ]->get_pos( 1 );
     vec_3 pt_c = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 2 ] ]->get_pos( 1 );
-    // 生成两个顶点向量
     vec_3 pt_ab = pt_b - pt_a;
     vec_3 pt_ac = pt_c - pt_a;
     vec_3 pt_tri_cam = camera_center - pt_a;
     vec_3 short_axis = _short_axis;
-    // 计算法向量
     ptr->m_normal = pt_ab.cross( pt_ac );
     if ( ptr->m_normal.norm() != 0 )
     {
@@ -466,5 +496,40 @@ void correct_triangle_index( Triangle_ptr &ptr, const vec_3 &camera_center, cons
     {
         ptr->m_normal *= -1;
     }
+//    // 获取三个顶点的位置信息
+//    vec_3 pt_a = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 0 ] ]->get_pos( 1 );
+//    vec_3 pt_b = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 1 ] ]->get_pos( 1 );
+//    vec_3 pt_c = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 2 ] ]->get_pos( 1 );
+//    // 生成两个顶点向量
+//    vec_3 pt_ab = pt_b - pt_a;
+//    vec_3 pt_ac = pt_c - pt_a;
+//    vec_3 pt_tri_cam = camera_center - pt_a;
+//    vec_3 short_axis = _short_axis;
+//    // 计算法向量
+//    ptr->m_normal = pt_ab.cross( pt_ac );
+//    if ( ptr->m_normal.norm() != 0 )
+//    {
+//        ptr->m_normal.normalize();
+//    }
+//    else
+//    {
+//        ptr->m_normal = vec_3( 0, 0, 1 );
+//    }
+//    if ( short_axis.dot( pt_tri_cam ) < 0 )
+//    {
+//        short_axis *= -1;
+//    }
+//    if ( short_axis.dot( ptr->m_normal ) < 0 )
+//    {
+//        ptr->m_index_flip = 0;
+//    }
+//    else
+//    {
+//        ptr->m_index_flip = 1;
+//    }
+//    if ( ptr->m_normal( 2 ) < 0 )
+//    {
+//        ptr->m_normal *= -1;
+//    }
 }
 
