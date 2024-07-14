@@ -389,9 +389,9 @@ void Global_map::service_refresh_pts_for_projection()
             m_mutex_m_box_recent_hitted->unlock();
 
             // get_all_pts_in_boxes(boxes_recent_hitted, pts_in_recent_hitted_boxes);
-            m_mutex_rgb_pts_in_recent_hitted_boxes->lock();
+//            m_mutex_rgb_pts_in_recent_hitted_boxes->lock();
             // m_rgb_pts_in_recent_visited_voxels = pts_in_recent_hitted_boxes;
-            m_mutex_rgb_pts_in_recent_hitted_boxes->unlock();
+//            m_mutex_rgb_pts_in_recent_hitted_boxes->unlock();
         }
         selection_points_for_projection( img_for_projection, pts_rgb_vec_for_projection.get(), nullptr, 10.0, 1 );
         m_mutex_pts_vec->lock();
@@ -478,7 +478,7 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
     {
         pts_added_vec->clear();
     }
-// m_recent_visited_voxel_activated_time感觉恒为0 | 这里的time我感觉是次数的意思
+    // m_recent_visited_voxel_activated_time感觉恒为0 | 这里的time我感觉是次数的意思
     if ( m_recent_visited_voxel_activated_time == 0 )
     {
         voxels_recent_visited.clear();
@@ -620,10 +620,10 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
     }
 
     // 实际运行中 pts_added_vec的数据一直为nullptr
-    if(pts_added_vec != nullptr)
-        LOG(INFO) << "[service_reconstruct_mesh] New "<<pts_added_vec->size() <<" points are added in the global map!";
-    else
-        LOG(INFO) << "[service_reconstruct_mesh] New "<< acc << " points are added in the global map and The pts_added_vec is empty!!";
+//    if(pts_added_vec != nullptr)
+//        LOG(INFO) << "[service_reconstruct_mesh] New "<<pts_added_vec->size() <<" points are added in the global map!";
+//    else
+//        LOG(INFO) << "[service_reconstruct_mesh] New "<< acc << " points are added in the global map and The pts_added_vec is empty!!";
 
     m_in_appending_pts = 0;
     m_mutex_m_box_recent_hitted->lock();
@@ -710,7 +710,12 @@ static inline double thread_render_pts_in_voxel( const int& pt_start, const int&
     {
         // voxel_ptr指向当前的voxel
         RGB_voxel_ptr voxel_ptr = (*voxels_for_render)[ voxel_idx ];
+
+        // 添加判断 - 防止出现m_pts_in_grid为空的情况
+        if(voxel_ptr->m_pts_in_grid.empty())
+           continue;
         // 这里获取到的数据为该体素中的所有点云
+        /// @bug 不知道这里为什么也有问题
         for ( int pt_idx = 0; pt_idx < voxel_ptr->m_pts_in_grid.size(); pt_idx++ )
         {
             pt_w = voxel_ptr->m_pts_in_grid[pt_idx]->get_pos();
@@ -821,7 +826,7 @@ FILE*                        photometric_fp = nullptr;
 void render_pts_in_voxels_mp( std::shared_ptr< Image_frame >& img_ptr, std::unordered_set< RGB_voxel_ptr >* _voxels_for_render,
                               const double& obs_time )
 {
-    LOG(INFO) << "---- starting the rendering process ----";
+//    LOG(INFO) << "---- starting the rendering process ----";
 
     Common_tools::Timer tim;
 
@@ -841,11 +846,11 @@ void render_pts_in_voxels_mp( std::shared_ptr< Image_frame >& img_ptr, std::unor
 
     if ( USING_OPENCV_TBB )
     {
-        LOG(INFO) << "prepare multi-thread to process the rendering work";
-        cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
-                           [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, img_ptr, &g_voxel_for_render, obs_time ); } );
+//        LOG(INFO) << "prepare multi-thread to process the rendering work";
+//        cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
+//                           [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, img_ptr, &g_voxel_for_render, obs_time ); } );
         /// @attention 原版的程序在渲染点云上就没有问题 | 只是在immesh中的record的部分有问题的(使用这个部分会导致段错误) | 注意这里发布RGB点云是另一个线程进行处理的
-//        thread_render_pts_in_voxel(0, numbers_of_voxels , img_ptr, &g_voxel_for_render, obs_time);
+        thread_render_pts_in_voxel(0, numbers_of_voxels , img_ptr, &g_voxel_for_render, obs_time);
     }
     else
     {
@@ -941,21 +946,31 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
     std::unordered_set< std::shared_ptr< RGB_Voxel > > boxes_recent_hitted = m_voxels_recent_visited;
     m_mutex_m_box_recent_hitted->unlock();
 
+    int temp = 0;
     if ( ( !use_all_pts ) && boxes_recent_hitted.size() )
     {
 //        LOG(INFO) << "Get voxel points to projection";
-        m_mutex_rgb_pts_in_recent_hitted_boxes->lock();
+//        m_mutex_rgb_pts_in_recent_hitted_boxes->lock();
         for ( Voxel_set_iterator it = boxes_recent_hitted.begin(); it != boxes_recent_hitted.end(); it++ )
         {
+            temp++;
             // pts_for_projection.push_back( (*it)->m_pts_in_grid.back() );
+            if(! ( (*it)->m_pts_in_grid.empty() ))
+            {
+                // 不为空 取第一个元素
+                pts_for_projection.push_back( ( *it )->m_pts_in_grid[ 0 ] );
+            }
             if ( ( *it )->m_pts_in_grid.size() )
             {
-                //  pts_for_projection.push_back( (*it)->m_pts_in_grid.back() );
-                pts_for_projection.push_back( ( *it )->m_pts_in_grid[ 0 ] );
+                /// @bug 在运行过程中,程序在这里出现了段错误 - 源程序中使用的是 pts_for_projection.push_back( ( *it )->m_pts_in_grid[ 0 ] ); 但是r3live里面使用的是pts_for_projection.push_back( (*it)->m_pts_in_grid.back() );
+                    // 为什么这里这里对于一个voxel只使用了一个点云数据
+//                  pts_for_projection.push_back( (*it)->m_pts_in_grid.back() );
+//                pts_for_projection.push_back( ( *it )->m_pts_in_grid[ 0 ] );
                 // pts_for_projection.push_back( ( *it )->m_pts_in_grid[ ( *it )->m_pts_in_grid.size()-1 ] );
             }
+            cout << temp <<' ';
         }
-        m_mutex_rgb_pts_in_recent_hitted_boxes->unlock();
+//        m_mutex_rgb_pts_in_recent_hitted_boxes->unlock();
     }
     else
     {
@@ -963,11 +978,17 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
         pts_for_projection = m_rgb_pts_vec;             // m_rgb_pts_vec 为当前Global_map中的所有特征点
     }
 
+    if(pts_for_projection.empty())
+        return;
+
     int pts_size = pts_for_projection.size();
     // 定义一个 point_cloud 来处理数据 主要作用是将能投影的点云进行可视化(用于debug的操作)
     //    pcl::PointCloud<pcl::PointXYZINormal>::Ptr my_pts_projection(new pcl::PointCloud<pcl::PointXYZINormal>);
     //    my_pts_projection->clear();
 
+
+
+    /// @bug 不知道为什么在这里程序会死掉...
     for ( int pt_idx = 0; pt_idx < pts_size; pt_idx += skip_step )
     {
         vec_3  pt = pts_for_projection[ pt_idx ]->get_pos();
@@ -1044,7 +1065,7 @@ void Global_map::selection_points_for_projection( std::shared_ptr< Image_frame >
 
 //    LOG(INFO) << "pc_2d_out_vec: " << pc_2d_out_vec->size();
 //    LOG(INFO) << "pc_out_vec: " << pc_out_vec->size();
-    LOG(INFO) << "[selection_points_for_projection] " << "add points: " << acc <<" replace points: " << blk_rej;
+//    LOG(INFO) << "[selection_points_for_projection] " << "add points: " << acc <<" replace points: " << blk_rej;
 
 }
 
@@ -1273,7 +1294,7 @@ void Global_map::service_pub_rgb_maps()
         }
         last_publish_map_idx = m_last_updated_frame_idx;
 
-        LOG(INFO) << "pts_size: " << pts_size;
+//        LOG(INFO) << "pts_size: " << pts_size;
         for ( int i = 0; i < pts_size; i++ )
         {
             if ( m_rgb_pts_vec[ i ]->m_N_rgb < 1 )
@@ -1332,6 +1353,6 @@ void Global_map::service_pub_rgb_maps()
             number_of_pts_per_topic *= 1.5;
             sleep_time_aft_pub *= 1.5;
         }
-        LOG(INFO) << "[service_pub_rgb_maps] publish";
+//        LOG(INFO) << "[service_pub_rgb_maps] publish";
     }
 }

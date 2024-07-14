@@ -119,8 +119,9 @@ class Triangle_manager
 {
   public:
     Global_map*                             m_pointcloud_map = nullptr;
-    // 当前所有的triangle都在这里被保存
+    // 当前所有的triangle都在这里被保存 - 方便快速查找一个triangle是不是已经存在
     Hash_map_3d< int, Triangle_ptr >        m_triangle_hash;
+
     double                                  m_region_size = 10.0;
     std::vector< Sync_triangle_set* >            m_triangle_set_vector;     // 对 三角部分set的一个向量
     // Hash_map_3d< int, Triangle_set >        m_triangle_set_in_region;
@@ -363,10 +364,13 @@ class Triangle_manager
             // return triangle_ptr;
         }
 
+        // 将新来的triangle进行插入
         m_mutex_triangle_hash.lock();
         // m_triangle_list.insert( triangle_ptr );
         insert_triangle_to_list( triangle_ptr, frame_idx );
+
         // ins
+        // 这里默认为false - 但是具体的作用应该是进行点以及边到三角形的映射关系
         if ( build_triangle_map )
         {
             // Step 2: add this triangle to points list:

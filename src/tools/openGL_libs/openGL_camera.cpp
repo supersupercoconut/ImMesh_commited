@@ -69,9 +69,15 @@ GLFWwindow* GL_camera::init_openGL_and_ImGUI( const char* window_title, int full
     {
         glfwMaximizeWindow( m_glfw_window );
     }
-    ImGuiIO& io = ImGui::GetIO();
-    
+//    ImGuiIO& io = ImGui::GetIO();
+/// 自己补充内容(启动imgui中的dockering部分) ///
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+/////////////////
     init_ImGUI_IO( &io );
+
+
+
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL( m_glfw_window, true );
     ImGui_ImplOpenGL3_Init( glsl_version );

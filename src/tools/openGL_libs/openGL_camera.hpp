@@ -1,7 +1,7 @@
-/* 
+/*
 This code is the implementation of our paper "ImMesh: An Immediate LiDAR Localization and Meshing Framework".
 
-The source code of this package is released under GPLv2 license. We only allow it free for personal and academic usage. 
+The source code of this package is released under GPLv2 license. We only allow it free for personal and academic usage.
 
 If you use any code of this repo in your academic research, please cite at least one of our papers:
 [1] Lin, Jiarong, et al. "Immesh: An immediate lidar localization and meshing framework." IEEE Transactions on Robotics
@@ -11,7 +11,7 @@ If you use any code of this repo in your academic research, please cite at least
 [3] Lin, Jiarong, and Fu Zhang. "R3LIVE: A Robust, Real-time, RGB-colored, LiDAR-Inertial-Visual tightly-coupled
     state Estimation and mapping package." IEEE International Conference on Robotics and Automation (ICRA 2022)
 
-For commercial use, please contact me <ziv.lin.ljr@gmail.com> and Dr. Fu Zhang <fuzhang@hku.hk> to negotiate a 
+For commercial use, please contact me <ziv.lin.ljr@gmail.com> and Dr. Fu Zhang <fuzhang@hku.hk> to negotiate a
 different license.
 
  Redistribution and use in source and binary forms, with or without
@@ -140,7 +140,7 @@ inline bool texture_from_eigen_mat( const Eigen::Matrix< unsigned char, -1, -1 >
 
     if ( eigen_image.cols() == 0 )
         return false;
-    
+
     image_width = eigen_image.cols() ;
     image_height = eigen_image.rows() / 3 ;
     // cout << "Eigen mat size = " << image_width << " x " << image_height << endl;
@@ -210,18 +210,18 @@ struct Cam_view
     Eigen::Matrix< double, 3, 3 >  m_camera_intrinsic_inv;
     glm::mat4                      m_glm_projection_mat;
     vec_3                           m_camera_pose_eula_angle = vec_3( 0, 0, 0 );
-    
+
     // For depth points downsample
     Hash_map_3d<long, vec_3f> m_downsample_kd_hash;
     float m_depth_downsample_resolution = 0.01;
     std::vector< vec_3f > m_depth_pts_vec, m_camera_frame_pts_vec;
-    
+
     int m_depth_avail_pts_count = 0;
     tinycolormap::ColormapType m_color_bar_theme =  tinycolormap::ColormapType::Heat;
-    
+
     int m_depth_color_bar_height = 20;
-    
-    GLuint m_gl_depth_image_color_texture = 0; 
+
+    GLuint m_gl_depth_image_color_texture = 0;
     std::vector<std::string> m_extra_info_vec;
     double m_cost_time = 0.0;
     bool m_gui_dy_config = false;
@@ -258,7 +258,7 @@ struct Cam_view
         float z_depth_value = 2.0 * z_near * z_far / ( z_far + z_near - z_n * ( z_far - z_near ) );
         return z_depth_value;
     }
-    
+
     void clear_downsample_hash()
     {
         m_downsample_kd_hash.m_map_3d_hash_map.clear();
@@ -291,7 +291,7 @@ struct Cam_view
         int m_gl_image_width = 0;
         int m_gl_image_height = 0;
         return texture_from_eigen_mat( m_depth_RGB_image, &m_gl_depth_image_texture, &m_gl_image_width, &m_gl_image_height );
-    } 
+    }
 
     void convert_depth_buffer_to_truth_depth(EIGEN_DEPTH_BUFFER_MAT_TYPE * depth_mat);
 
@@ -313,7 +313,7 @@ struct Cam_view
         ImGui::Text( text.c_str() );
     }
 
-   
+
 
     void draw_depth_image( bool * win_open = nullptr );
 
@@ -345,7 +345,7 @@ inline void save( Archive& ar, const Cam_view& cam_view, const unsigned int /*ve
 
 template < typename Archive >
 inline void load( Archive& ar, Cam_view& cam_view, const unsigned int /*version*/ )
-{ 
+{
     std::string version_str;
     ar >> version_str;
     if ( version_str.compare( std::string( OPENGL_CAMERA_VERSION ) ) == 0 )
@@ -373,7 +373,7 @@ inline void load( Archive& ar, Cam_view& cam_view, const unsigned int /*version*
 struct GL_camera
 {
     // See the camera system in openGL: https://learnopengl.com/Getting-started/Camera
-    
+
     Cam_view                      m_gl_cam;
     vec_3                         m_cursor_clicked_pts;
     float                         g_rot_sensetive = 0.15;
@@ -465,7 +465,7 @@ struct GL_camera
     void        draw_frame_start( ImVec4 clear_color = ImVec4( 0, 0, 0, 1.0 ) );
     void        tracking_camera( const Eigen::Quaterniond& current_camera_q, const vec_3& current_camera_pos );
 
-   
+
     void set_last_tracking_camera_pos( Eigen::Quaterniond current_camera_q, vec_3 current_camera_pos );
     void draw_frame_finish( int flush_camera_matrix = 1 );
     int if_windows_should_close();
@@ -513,4 +513,4 @@ inline void load( Archive& ar, GL_camera& gl_camera, const unsigned int /*versio
     {
         cout << ANSI_COLOR_RED_BOLD << "OPENGL_CAMERA_VERSION mismatch !!!" << ANSI_COLOR_RESET << endl;
     }
-}   
+}

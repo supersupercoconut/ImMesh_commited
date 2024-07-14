@@ -2139,7 +2139,7 @@ void Voxel_mapping::point_cloud_colored()
 
         g_map_rgb_pts_mesh.m_minimum_pts_size = 0.03; //之前这里一直按照0.1m来设置的，感觉其会丢失掉很多points
         g_map_rgb_pts_mesh.append_points_to_global_map(*offline_pts, 1, nullptr, 2);    // r3live本身这里是怎么将全局点云数入到全局地图中？
-//        LOG(INFO) << "m_voxels_recent_visited: " << g_map_rgb_pts_mesh.m_voxels_recent_visited.size();
+        LOG(INFO) << "m_voxels_recent_visited: " << g_map_rgb_pts_mesh.m_voxels_recent_visited.size();
 
         Eigen::Matrix3d rot_i2w = data_temp.m_pose_q.toRotationMatrix();
         Eigen::Vector3d pos_i2w = data_temp.m_pose_t;

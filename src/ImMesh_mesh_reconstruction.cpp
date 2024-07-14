@@ -67,6 +67,9 @@ static double g_LiDAR_frame_avg_time;
 
 
 /////////////////////// 新增部分
+std::mutex g_mutex_colored_points;
+std::mutex g_mutex_projection_points;
+std::shared_ptr<std::shared_future<void> > g_render_thread = nullptr;
 extern LiDAR_color_frame_pts_and_pose_vec g_eigen_color_vec_vec;
 namespace {
     std::unique_ptr<std::thread> g_pub_thr = nullptr;
@@ -134,6 +137,8 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     g_map_rgb_pts_mesh.append_points_to_global_map( *frame_pts, frame_idx, nullptr, append_point_step );
     std::unordered_set< std::shared_ptr< RGB_Voxel > > *voxels_recent_visited = &g_map_rgb_pts_mesh.m_voxels_recent_visited;
     g_mutex_append_map.unlock();
+    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the append_points_to_global_map ";
+
 
     /*** 位姿变换 ***/
     Eigen::Matrix3d rot_i2w = pose_q.toRotationMatrix();
@@ -146,6 +151,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     t_w2c = rot_i2w * extR * camera_ext_t + extR * extT + pos_i2w;
 
 
+
     std::shared_ptr<Image_frame> image_pose = std::make_shared<Image_frame>(cam_k);
     image_pose->set_pose(eigen_q(R_w2c), t_w2c);
     image_pose->m_img = img;
@@ -154,18 +160,29 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     image_pose->init_cubic_interpolation();
     image_pose->image_equalize();
 
-    std::vector<cv::Point2f> pts_2d_vec;
-    std::vector<std::shared_ptr<RGB_pts> > rgb_pts_vec;
 
-    g_mutex_append_map.lock();
-    g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
-    g_mutex_append_map.unlock();
 
+    /// @attention 突然感觉这个函数的作用不大 - 基本上是不需要被使用的(这个生成的数据后面也没有被使用)
+//    std::vector<cv::Point2f> pts_2d_vec;
+//    std::vector<std::shared_ptr<RGB_pts> > rgb_pts_vec;
+////    g_mutex_projection_points.lock();
+//    g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
+//    g_mutex_projection_points.unlock();
+//    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the selection_points_for_projection ";
 
     /*** 渲染部分 ***/
-    auto idx = frame_idx;
+//    g_render_thread = std::make_shared< std::shared_future< void > >( g_thread_pool_rec_mesh->commit_task(
+//            render_pts_in_voxels_mp, image_pose, &g_map_rgb_pts_mesh.m_voxels_recent_visited, image_pose->m_timestamp ) );
+
+    //    auto idx = frame_idx;
+
+//    g_mutex_colored_points.lock();
     render_pts_in_voxels_mp(image_pose, voxels_recent_visited , image_pose->m_timestamp );
+//    g_mutex_colored_points.unlock();
+
     g_map_rgb_pts_mesh.m_last_updated_frame_idx++;
+    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
+
 
 
     /*** 发布线程 ***/
@@ -190,7 +207,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     tim_total.tic();
 
 
-    LOG(INFO) << "voxels_recent_visited: " << voxels_recent_visited->size();
     try
     {
         /// @attention Cpp的并行计算库tbb(又相当于是创建了新的多个线程来处理数据) | parallel_for_each 需要指定一个搜索范围+一个lambda表达式 | lambda的形参 对应就是从voxels_recent_visited取出来的voxel数据
@@ -220,7 +236,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
                 return;
             }
             g_mutex_append_map.unlock();
-
 
             // Voxel-wise mesh pull
             pts_in_voxels = retrieve_neighbor_pts_kdtree( pts_in_voxels );
@@ -281,7 +296,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             // Voxel-wise mesh commit(所有应该构建出来的Mesh与已经存在的mesh对比)
             triangle_compare( triangles_sets, add_triangle_idx, triangles_to_remove, triangles_to_add, &existing_triangle );
 
-            // Refine normal index - 将新增的triangle以及已经存在的triangle进行修正、
+            // Refine normal index - 将新增的triangle以及已经存在的triangle进行修正 | 修正是整个平面的法向量
             for ( auto triangle_ptr : triangles_to_add )
             {
                 // 使用g_eigen_vec_vec的位姿信息 - 即对应了在GUI做展示的时候 实际运行出来的实际 camera 的位姿信息 | 短轴部分对应的应该是2D投影平面上的法向量
@@ -300,6 +315,9 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 
             voxel_idx++;
         } );
+
+        LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the delaunay_triangulation + triangle_compare + correct_triangle_index";
+
     }
     catch ( ... )
     {
@@ -320,10 +338,10 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         total_delete_triangle += triangles_set.second.size();
         g_triangles_manager.remove_triangle_list( triangles_set.second );
     }
-    LOG(INFO) << "[incremental_mesh_reconstruction]: The count of deleted triangle is "<< total_delete_triangle;
+//    LOG(INFO) << "[incremental_mesh_reconstruction]: The count of deleted triangle is "<< total_delete_triangle;
 
-    /// @attention 每一个voxel中的triangle集合
-    for ( auto &triangle_list : added_triangle_list )
+    /// @attention 每一个voxel都不保存triangle数据 - 直接使用一个完整triangle_manager来管理
+    for ( auto &triangle_list : added_triangle_list ) // added_triangle_list 对应目前这个voxel中所有的triangle
     {
         Triangle_set triangle_idx = triangle_list.second;
         total_add_triangle += triangle_idx.size();
@@ -335,7 +353,9 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             tri_ptr->m_index_flip = triangle_ptr->m_index_flip;
         }
     }
-    LOG(INFO) << "[incremental_mesh_reconstruction]: The count of added triangle is "<< total_add_triangle;
+//    LOG(INFO) << "[incremental_mesh_reconstruction]: The count of added triangle is "<< total_add_triangle;
+
+    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the insert_triangle";
     g_mutex_reconstruct_mesh.unlock();
 
     if ( g_fp_cost_time )
@@ -426,6 +446,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             {
                 return;
             }
+
             Common_tools::Timer tim_lock;
             tim_lock.tic();
             voxel->m_meshing_times++;
@@ -436,7 +457,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             // printf("Voxels [%d], (%d, %d, %d) ", count, pos_1(0), pos_1(1), pos_1(2) );
             std::unordered_set< std::shared_ptr< RGB_Voxel > > neighbor_voxels;
             neighbor_voxels.insert( voxel );
-
 
             g_mutex_append_map.lock();
             // 获取neighbor_voxels中的所有特征点(现在还没有去获取周围的特征点) | 如果仅仅获取当前voxel中的RGB点,是不是不需要上锁(因为一次只访问单独的一个voxel，不同线程之间不会有冲突)
@@ -450,6 +470,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 
 
             // Voxel-wise mesh pull
+                // pts_in_voxels 一开始获取到这个数据的时候是需要上锁的 - 但是现在其变成了一个lambda函数中的临时变量,就不需要上锁了
             pts_in_voxels = retrieve_neighbor_pts_kdtree( pts_in_voxels );
             pts_in_voxels = remove_outlier_pts( pts_in_voxels, voxel );
 
@@ -466,6 +487,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             pts_in_voxels.clear();
             for ( auto p : relative_point_indices )
             {
+                // 只读取也不要上锁 g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ]
                 pts_in_voxels.push_back( g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ] );
             }
            
@@ -639,6 +661,7 @@ void service_reconstruct_mesh()
                 /// @attention 这里说的是某一个空闲线程来接受这个任务而不是所有的线程都在执行这个函数
 //                g_thread_pool_rec_mesh->commit_task( incremental_mesh_reconstruction, data_pack_front.m_frame_pts, data_pack_front.m_pose_q,
 //                                                     data_pack_front.m_pose_t, data_pack_front.m_frame_idx );
+
 //                g_thread_pool_rec_mesh->commit_task([&]() {
 //                    incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
 //                                                    data_pack_front.m_pose_q,
@@ -647,17 +670,25 @@ void service_reconstruct_mesh()
 //                });
 
                 /// @bug 全靠gpt修改出来的代码 神奇 本来我都想去不再使用这个线程池,直接处理数据了
-                g_thread_pool_rec_mesh->commit_task([&]() {
-                    incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
-                                                    data_pack_front.m_img,
-                                                    data_pack_front.m_pose_q,
-                                                    data_pack_front.m_pose_t,
-                                                    data_pack_front.m_frame_idx);
-                });
+                    // 这里是不是会让 incremental_mesh_reconstruction 也执行多次
+//                g_thread_pool_rec_mesh->commit_task([&]() {
+//                    incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
+//                                                    data_pack_front.m_img,
+//                                                    data_pack_front.m_pose_q,
+//                                                    data_pack_front.m_pose_t,
+//                                                    data_pack_front.m_frame_idx);
+//                });
+
+                // 这里感觉是在线程池里面重复执行这个函数的时候导致的错误
+                incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
+                                                data_pack_front.m_img,
+                                                data_pack_front.m_pose_q,
+                                                data_pack_front.m_pose_t,
+                                                data_pack_front.m_frame_idx);
 
             }
 
-        std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
+//        std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
     }
 }
 

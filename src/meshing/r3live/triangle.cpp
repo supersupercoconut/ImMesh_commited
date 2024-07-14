@@ -1,5 +1,5 @@
 #include "triangle.hpp"
-
+#include <glog/logging.h>
 vec_3 Triangle_manager::get_triangle_center(const Triangle_ptr& tri_ptr)
 {
     vec_3 triangle_pos = ( m_pointcloud_map->m_rgb_pts_vec[ tri_ptr->m_tri_pts_id[ 0 ] ]->get_pos() +
@@ -32,12 +32,21 @@ int Triangle_manager::get_all_triangle_list(std::vector< Triangle_set > & triang
     return all_triangle_num;
 }
 
+// 这里对应的tri_ptr应该是目前需要新增的triangle上面对应的顶点
 void Triangle_manager::insert_triangle_to_list( const Triangle_ptr& tri_ptr , const int& frame_idx)
 {
     vec_3         triangle_pos = get_triangle_center( tri_ptr );
+    // hash_3d_x | hash_3d_y | hash_3d_z 都会根据 m_region_size 进行分类
     int          hash_3d_x = std::round( triangle_pos( 0 ) / m_region_size );
     int          hash_3d_y = std::round( triangle_pos( 1 ) / m_region_size );
     int          hash_3d_z = std::round( triangle_pos( 2 ) / m_region_size );
+
+    /*
+     *  将所有的需要新增的triangle数据进行打包 | 数据被打包在 m_triangle_set_vector 以及 m_triangle_set_in_region 中
+     *    1. m_triangle_set_vector 用于实际保存 GUI 的 triangle数据 —— 在实际使用中这部分保存的数据会增加, 不会减少
+     *    2. m_triangle_set_in_region 用于方便数据的快速查找
+     * */
+
     Sync_triangle_set* sync_triangle_set_ptr = m_triangle_set_in_region.get_data( hash_3d_x, hash_3d_y, hash_3d_z );
     if ( sync_triangle_set_ptr == nullptr )
     {
@@ -50,6 +59,9 @@ void Triangle_manager::insert_triangle_to_list( const Triangle_ptr& tri_ptr , co
     {
         sync_triangle_set_ptr->insert( tri_ptr );
     }
+
+//    LOG(INFO) << "m_triangle_set_vector:" << m_triangle_set_vector.size() ;
+
 }
 
 void Triangle_manager::erase_triangle_from_list( const Triangle_ptr& tri_ptr , const int & frame_idx)

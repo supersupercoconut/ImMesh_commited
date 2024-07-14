@@ -208,6 +208,7 @@ class RGB_Voxel
         m_pos[1] = y;
         m_pos[2] = z;
         m_center = vec_3( x * g_voxel_resolution, y * g_voxel_resolution, z * g_voxel_resolution );
+        m_pts_in_grid = {};
     };
 
     void refresh_triangles();
