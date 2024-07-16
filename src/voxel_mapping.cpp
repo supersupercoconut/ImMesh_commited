@@ -1805,6 +1805,14 @@ int Voxel_mapping::service_LiDAR_update()
             continue;
         }
 
+        // 判断打包数据完备性 (貌似这里并不是很完备)
+//        if( m_Lidar_Measures.lidar->empty() || m_Lidar_Measures.measures.back().img.empty() || m_Lidar_Measures.measures.back().imu.empty() )
+//        {
+//            LOG(ERROR) << "sync_packages lack some data !!!! System Fault !!!!!";
+//            return -1;
+//        }
+
+
         /*** Packaged got ***/
         if ( m_flg_reset )
         {

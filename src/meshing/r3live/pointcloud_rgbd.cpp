@@ -57,6 +57,10 @@ extern Common_tools::Cost_time_logger              g_cost_time_logger;
 extern std::shared_ptr< Common_tools::ThreadPool > m_thread_pool_ptr;
 extern Voxel_mapping voxel_mapping;
 
+std::mutex g_mutex_append_points_process;
+std::mutex g_mutex_render_mp_process;
+std::mutex g_mutex_render_voxel_mp_process;
+
 cv::RNG                                            g_rng = cv::RNG( 0 );
 // std::atomic<long> g_pts_index(0);
 double                     g_voxel_resolution = 0.1;
@@ -81,14 +85,17 @@ void RGB_pts::set_smooth_pos( const vec_3& pos )
     m_smoothed = true;
 }
 
+/// @bug 实在是想不明白为什么程序在这里崩溃 - 在返回这个位置数据的时候
 vec_3 RGB_pts::get_pos( bool get_smooth )
 {
+
     if ( get_smooth )
     {
         return vec_3( m_pos_aft_smooth[ 0 ], m_pos_aft_smooth[ 1 ], m_pos_aft_smooth[ 2 ] );
     }
     else
     {
+        // 会不会是这部分想去访问这个RGB_pts的数据, 但是在其他线程这个数据已经被删除掉了
         return vec_3( m_pos[ 0 ], m_pos[ 1 ], m_pos[ 2 ] );
     }
 }
@@ -460,46 +467,209 @@ std::vector< RGB_pt_ptr > retrieve_pts_in_voxels( std::unordered_set< std::share
 }
 
 std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited;
+int this_reasonable_threshold = 1000;
 
 // added_time 为新来点云的id编码
 template < typename T >
 int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double added_time, std::vector< std::shared_ptr< RGB_pts > >* pts_added_vec,
                                              int step, int disable_append )
 {
+//    std::unique_lock< std::mutex > lock( g_mutex_append_points_process );
+
+//    m_in_appending_pts = 1;
+//    Common_tools::Timer tim;
+//    tim.tic();
+//    int acc = 0;
+//    int rej = 0;
+//
+//    // clear的作用只是清空数据,但是不会让其指向一个nullptr的部分
+//    if ( pts_added_vec != nullptr )
+//    {
+//        pts_added_vec->clear();
+//    }
+//    // m_recent_visited_voxel_activated_time感觉恒为0 | 这里的time我感觉是次数的意思
+//    if ( m_recent_visited_voxel_activated_time == 0 )
+//    {
+//        voxels_recent_visited.clear();
+//    }
+//    else
+//    {
+//        // m_mutex_m_box_recent_hitted这个锁就是为了m_voxels_recent_visited而设置出来的锁
+//        m_mutex_m_box_recent_hitted->lock();
+//        // 交换值 ( 时间复杂度为O(1) ) -> 并不是元素之间转换,是这两个vector中指向数据部分的指针直接互换
+//        std::swap( voxels_recent_visited, m_voxels_recent_visited );
+//        m_mutex_m_box_recent_hitted->unlock();
+//
+//        for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
+//        {
+//            // 删除一些之前的数据(因为这里的m_recent_visited_voxel_activated_time=0,而且m_last_visited_time被赋值成为了added_time,所以感觉这里之前的数据都被清空了) | 所以应该是什么是最近访问做定义
+//            if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
+//            {
+//                it = voxels_recent_visited.erase( it );
+//                continue;
+//            }
+//
+//            if ( ( *it )->m_pts_in_grid.size() )
+//            {
+//                double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
+//                // if ( voxel_dis > 30 )
+//                // {
+//                //     it = voxels_recent_visited.erase( it );
+//                //     continue;
+//                // }
+//            }
+//            it++;
+//        }
+//        // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
+//    }
+//
+//    int number_of_voxels_before_add = voxels_recent_visited.size();
+//    int pt_size = pc_in.points.size();
+//    // step = 4;
+//
+//    g_mutex_append_points_process.lock();
+//    KDtree_pt_vector     pt_vec_vec;
+//    std::vector< float > dist_vec;
+//    RGB_voxel_ptr* temp_box_ptr_ptr;
+//
+//    for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
+//    {
+//        int  add = 1;
+//        // m_minimum_pts_size对应的大小为0.05,即对应着grid中的大小划分为0.05(估计是滤波相关操作) | 相当于是把xyz转换是grid的编号
+//        int  grid_x = std::round( pc_in.points[ pt_idx ].x / m_minimum_pts_size );
+//        int  grid_y = std::round( pc_in.points[ pt_idx ].y / m_minimum_pts_size );
+//        int  grid_z = std::round( pc_in.points[ pt_idx ].z / m_minimum_pts_size );
+//        // 将xyz转换成voxel对应的编号
+//        int  box_x = std::round( pc_in.points[ pt_idx ].x / m_voxel_resolution );
+//        int  box_y = std::round( pc_in.points[ pt_idx ].y / m_voxel_resolution );
+//        int  box_z = std::round( pc_in.points[ pt_idx ].z / m_voxel_resolution );
+//        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );  // 查找是否存在数据
+//
+//        // 如果找的到
+//        if ( pt_ptr != nullptr )
+//        {
+//            add = 0;
+//            if ( pts_added_vec != nullptr )
+//            {
+//                pts_added_vec->push_back( *pt_ptr );
+//            }
+//        }
+//
+//        // 查找voxel现在有没有
+//        RGB_voxel_ptr box_ptr;
+//        temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
+//        // 没找到voxel
+//        if ( temp_box_ptr_ptr == nullptr )
+//        {
+//            box_ptr = std::make_shared< RGB_Voxel >( box_x, box_y, box_z );
+//            m_hashmap_voxels.insert( box_x, box_y, box_z, box_ptr );
+//            m_voxel_vec.push_back( box_ptr );
+//        }
+//        else
+//        {
+//            box_ptr = *temp_box_ptr_ptr;
+//        }
+//        // 根据点的位置, 找到对应的voxel位置
+//        voxels_recent_visited.insert( box_ptr );
+//        box_ptr->m_last_visited_time = added_time;
+//
+//        // acc == 0说明这个点已经存在了,不需要再处理
+//        if ( add == 0 )
+//        {
+//            rej++;
+//            continue;
+//        }
+//        if ( disable_append )
+//        {
+//            continue;
+//        }
+//
+//        acc++;
+//        // 新建一个Kdtree中对应的点数据 | 总之就是进行了一个查找(让新点不要与之前的点在同一个grid中) | hash表中保留的数据与KD_tree中保留的数据有一些不一样
+//        KDtree_pt kdtree_pt( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ), 0 );
+//        if ( m_kdtree.Root_Node != nullptr )
+//        {
+//            // 寻找一个最近点，输出的点 + 到这个被查询点 kdtree_pt 的距离值也会被获取到
+//            m_kdtree.Nearest_Search( kdtree_pt, 1, pt_vec_vec, dist_vec );
+//            if ( pt_vec_vec.size() )
+//            {
+//                // 把点放入kD_tree的时候也要考虑点与点之间的距离约束
+//                if ( sqrt( dist_vec[ 0 ] ) < m_minimum_pts_size )
+//                    continue;
+//            }
+//        }
+//
+//        std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
+//        pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
+//        // 直接按照当前点云的size作为下一个点的id
+//        pt_rgb->m_pt_index = m_rgb_pts_vec.size();
+//        kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
+//        m_rgb_pts_vec.push_back( pt_rgb );
+//        m_hashmap_3d_pts.insert( grid_x, grid_y, grid_z, pt_rgb );
+//        if ( box_ptr != nullptr )
+//        {
+//            box_ptr->m_pts_in_grid.push_back( pt_rgb );
+//            // box_ptr->add_pt(pt_rgb);
+//            box_ptr->m_new_added_pts_count++;
+//            box_ptr->m_meshing_times = 0;
+//        }
+//        else
+//        {
+//            scope_color( ANSI_COLOR_RED_BOLD );
+//            for ( int i = 0; i < 100; i++ )
+//            {
+//                cout << "box_ptr is nullptr!!!" << endl;
+//            }
+//        }
+//        // Add to kdtree
+//        m_kdtree.Add_Point( kdtree_pt, false );
+//        if ( pts_added_vec != nullptr )
+//        {
+//            pts_added_vec->push_back( pt_rgb );
+//        }
+//    }
+//    g_mutex_append_points_process.unlock();
+//    // 实际运行中 pts_added_vec的数据一直为nullptr
+////    if(pts_added_vec != nullptr)
+////        LOG(INFO) << "[service_reconstruct_mesh] New "<<pts_added_vec->size() <<" points are added in the global map!";
+////    else
+////        LOG(INFO) << "[service_reconstruct_mesh] New "<< acc << " points are added in the global map and The pts_added_vec is empty!!";
+//
+//    m_in_appending_pts = 0;
+//    m_mutex_m_box_recent_hitted->lock();
+//    std::swap( m_voxels_recent_visited, voxels_recent_visited );
+//    // m_voxels_recent_visited = voxels_recent_visited ;
+//    m_mutex_m_box_recent_hitted->unlock();
+//
+//    return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
 
     m_in_appending_pts = 1;
     Common_tools::Timer tim;
     tim.tic();
     int acc = 0;
     int rej = 0;
-
-    // clear的作用只是清空数据,但是不会让其指向一个nullptr的部分
     if ( pts_added_vec != nullptr )
     {
         pts_added_vec->clear();
     }
-    // m_recent_visited_voxel_activated_time感觉恒为0 | 这里的time我感觉是次数的意思
+
     if ( m_recent_visited_voxel_activated_time == 0 )
     {
         voxels_recent_visited.clear();
     }
     else
     {
-        // m_mutex_m_box_recent_hitted这个锁就是为了m_voxels_recent_visited而设置出来的锁
         m_mutex_m_box_recent_hitted->lock();
-        // 交换值 ( 时间复杂度为O(1) ) -> 并不是元素之间转换,是这两个vector中指向数据部分的指针直接互换
         std::swap( voxels_recent_visited, m_voxels_recent_visited );
         m_mutex_m_box_recent_hitted->unlock();
-
         for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
         {
-            // 删除一些之前的数据(因为这里的m_recent_visited_voxel_activated_time=0,而且m_last_visited_time被赋值成为了added_time,所以感觉这里之前的数据都被清空了) | 所以应该是什么是最近访问做定义
+
             if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
             {
                 it = voxels_recent_visited.erase( it );
                 continue;
             }
-
             if ( ( *it )->m_pts_in_grid.size() )
             {
                 double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
@@ -509,33 +679,29 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
                 //     continue;
                 // }
             }
+
             it++;
         }
         // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
     }
-
     int number_of_voxels_before_add = voxels_recent_visited.size();
     int pt_size = pc_in.points.size();
     // step = 4;
 
     KDtree_pt_vector     pt_vec_vec;
     std::vector< float > dist_vec;
-    RGB_voxel_ptr* temp_box_ptr_ptr;
 
+    RGB_voxel_ptr* temp_box_ptr_ptr;
     for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
     {
         int  add = 1;
-        // m_minimum_pts_size对应的大小为0.05,即对应着grid中的大小划分为0.05(估计是滤波相关操作) | 相当于是把xyz转换是grid的编号
         int  grid_x = std::round( pc_in.points[ pt_idx ].x / m_minimum_pts_size );
         int  grid_y = std::round( pc_in.points[ pt_idx ].y / m_minimum_pts_size );
         int  grid_z = std::round( pc_in.points[ pt_idx ].z / m_minimum_pts_size );
-        // 将xyz转换成voxel对应的编号
         int  box_x = std::round( pc_in.points[ pt_idx ].x / m_voxel_resolution );
         int  box_y = std::round( pc_in.points[ pt_idx ].y / m_voxel_resolution );
         int  box_z = std::round( pc_in.points[ pt_idx ].z / m_voxel_resolution );
-        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );  // 查找是否存在数据
-
-        // 如果找的到
+        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );
         if ( pt_ptr != nullptr )
         {
             add = 0;
@@ -545,10 +711,9 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
             }
         }
 
-        // 查找voxel现在有没有
+        /// @bug 这里的box_ptr也会出现 {use count 1811941585 weak count 32762} 这种情况
         RGB_voxel_ptr box_ptr;
         temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
-        // 没找到voxel
         if ( temp_box_ptr_ptr == nullptr )
         {
             box_ptr = std::make_shared< RGB_Voxel >( box_x, box_y, box_z );
@@ -559,11 +724,14 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
         {
             box_ptr = *temp_box_ptr_ptr;
         }
-        // 根据点的位置, 找到对应的voxel位置
+
+        if (box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0) {
+            // 处理异常引用计数情况
+            return 0 ;
+        }
+
         voxels_recent_visited.insert( box_ptr );
         box_ptr->m_last_visited_time = added_time;
-
-        // acc == 0说明这个点已经存在了,不需要再处理
         if ( add == 0 )
         {
             rej++;
@@ -573,25 +741,26 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
         {
             continue;
         }
-
         acc++;
-        // 新建一个Kdtree中对应的点数据 | 总之就是进行了一个查找(让新点不要与之前的点在同一个grid中) | hash表中保留的数据与KD_tree中保留的数据有一些不一样
         KDtree_pt kdtree_pt( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ), 0 );
         if ( m_kdtree.Root_Node != nullptr )
         {
-            // 寻找一个最近点，输出的点 + 到这个被查询点 kdtree_pt 的距离值也会被获取到
             m_kdtree.Nearest_Search( kdtree_pt, 1, pt_vec_vec, dist_vec );
             if ( pt_vec_vec.size() )
             {
-                // 把点放入kD_tree的时候也要考虑点与点之间的距离约束
                 if ( sqrt( dist_vec[ 0 ] ) < m_minimum_pts_size )
+                {
                     continue;
+                }
             }
         }
 
         std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
+
+        if(box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0)
+            return 0;
+
         pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
-        // 直接按照当前点云的size作为下一个点的id
         pt_rgb->m_pt_index = m_rgb_pts_vec.size();
         kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
         m_rgb_pts_vec.push_back( pt_rgb );
@@ -618,20 +787,14 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
             pts_added_vec->push_back( pt_rgb );
         }
     }
-
-    // 实际运行中 pts_added_vec的数据一直为nullptr
-//    if(pts_added_vec != nullptr)
-//        LOG(INFO) << "[service_reconstruct_mesh] New "<<pts_added_vec->size() <<" points are added in the global map!";
-//    else
-//        LOG(INFO) << "[service_reconstruct_mesh] New "<< acc << " points are added in the global map and The pts_added_vec is empty!!";
-
     m_in_appending_pts = 0;
     m_mutex_m_box_recent_hitted->lock();
     std::swap( m_voxels_recent_visited, voxels_recent_visited );
     // m_voxels_recent_visited = voxels_recent_visited ;
     m_mutex_m_box_recent_hitted->unlock();
-
     return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
+
+
 }
 
 ///// @attention 这里可能是原作者是自己写的渲染过程
@@ -694,11 +857,15 @@ Common_tools::Cost_time_logger cost_time_logger_render( "/home/ziv/temp/render_t
 // ANCHOR - thread_render_pts_in_voxel
 std::atomic< long >  render_pts_count;
 extern double        g_maximum_pe_error;
+std::mutex g_mutex_voxel_ptr_process;
+
+int my_reasonable_threshold = 1000;
 
 static inline double thread_render_pts_in_voxel( const int& pt_start, const int& pt_end, const std::shared_ptr< Image_frame >& img_ptr,
                                                  const std::vector< RGB_voxel_ptr >* voxels_for_render, const double obs_time )
 {
 //    LOG(INFO) << "[thread_render_pts_in_voxel]: voxels_for_render size " << voxels_for_render->size();
+
     vec_3 pt_w;
     vec_3 rgb_color;
     double u, v;
@@ -706,19 +873,34 @@ static inline double thread_render_pts_in_voxel( const int& pt_start, const int&
     Common_tools::Timer tim;
     tim.tic();
 
+    //  这里img不为0再执行
+    assert(!( img_ptr->m_img.empty()) );
+    assert( pt_start<=pt_end );
+
     for (int voxel_idx = pt_start; voxel_idx < pt_end; voxel_idx++)
     {
-        // voxel_ptr指向当前的voxel
+        // voxel_ptr指向当前的voxel | 应该不会存在其他部分来同时访问这个voxel的值啊... voxel_idx 应该不会重复, 但是voxel_ptr获取对应元素的时候应该会出现同时访问的情况
+        g_mutex_voxel_ptr_process.lock();
+        // 保护当前的voxel_ptr
         RGB_voxel_ptr voxel_ptr = (*voxels_for_render)[ voxel_idx ];
+        g_mutex_voxel_ptr_process.unlock();
 
         // 添加判断 - 防止出现m_pts_in_grid为空的情况
-        if(voxel_ptr->m_pts_in_grid.empty())
+        if(voxel_ptr == nullptr || voxel_ptr->m_pts_in_grid.empty() )
            continue;
-        // 这里获取到的数据为该体素中的所有点云
-        /// @bug 不知道这里为什么也有问题
+
+        if (voxel_ptr.use_count() > my_reasonable_threshold || voxel_ptr.use_count() < 0) {
+            // 处理异常引用计数情况
+            return 0;
+        }
+
+        /// @bug 不知道这里为什么也有问题(我这里也没有使用多线程) -> pt_w = voxel_ptr->m_pts_in_grid[pt_idx]->get_pos(); 程序错误出现在这里就很奇怪
         for ( int pt_idx = 0; pt_idx < voxel_ptr->m_pts_in_grid.size(); pt_idx++ )
         {
+            assert( !(voxel_ptr->m_pts_in_grid.empty()) );
+
             pt_w = voxel_ptr->m_pts_in_grid[pt_idx]->get_pos();
+
             if ( img_ptr->project_3d_point_in_this_img( pt_w, u, v, nullptr, 1.0 ) == false )
             {
                 continue;
@@ -821,60 +1003,125 @@ static inline double thread_render_pts_in_voxel( const int& pt_start, const int&
 //    return cost_time;
 }
 
+// 专门为 g_voxel_for_render 数据设置一个互斥锁来控制
 std::vector< RGB_voxel_ptr > g_voxel_for_render;
 FILE*                        photometric_fp = nullptr;
-void render_pts_in_voxels_mp( std::shared_ptr< Image_frame >& img_ptr, std::unordered_set< RGB_voxel_ptr >* _voxels_for_render,
+int reasonable_threshold = 1000;
+/// @bug 关于这个函数的使用 - 这里对应的参数都是shared_ptr的指针 - 但是这里对应的image是不是不能失效(尤其是在使用线程池进行commit_task()来进行处理的部分)
+void render_pts_in_voxels_mp( const std::shared_ptr< Image_frame >& img_ptr,  std::unordered_set< RGB_voxel_ptr >* _voxels_for_render,
                               const double& obs_time )
 {
 //    LOG(INFO) << "---- starting the rendering process ----";
+    if(_voxels_for_render == nullptr)
+    {
+        LOG(ERROR) << "[render_pts_in_voxels_mp]: _voxels_for_render == nullptr !!! ";
+        return;
+    }
+
 
     Common_tools::Timer tim;
-
+    g_mutex_voxel_ptr_process.lock();
+    /// @attention 因为这里是一个全局变量 g_voxel_for_render 所以我在这里上锁保护一下 | 并且这个变量在这个函数中按照引用的方式 在thread_render_pts_in_voxel(0, numbers_of_voxels , img_ptr, &g_voxel_for_render, obs_time);这个函数中被使用 - 所以在这个两个函数中使用同一个互斥锁来控制
     g_voxel_for_render.clear();
     for ( Voxel_set_iterator it = ( *_voxels_for_render ).begin(); it != ( *_voxels_for_render ).end(); it++ )
     {
         g_voxel_for_render.push_back( *it );
     }
+    int numbers_of_voxels = g_voxel_for_render.size();
+    g_mutex_voxel_ptr_process.unlock();
 
     std::vector< std::future< double > > results;
     tim.tic( "Render_mp" );
-    int numbers_of_voxels = g_voxel_for_render.size();
+
 //    g_cost_time_logger.record( "Pts_num", numbers_of_voxels );    // 源程序的代码在这里出现了问题(但是一个 record 的函数应该是无关紧要的部分才对)
     render_pts_count = 0;
     img_ptr->m_acc_render_count = 0;
     img_ptr->m_acc_photometric_error = 0;
 
+
     if ( USING_OPENCV_TBB )
     {
 //        LOG(INFO) << "prepare multi-thread to process the rendering work";
-//        cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
-//                           [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, img_ptr, &g_voxel_for_render, obs_time ); } );
+
+        // g_voxel_for_render 这个数据是一个公共数据(全局) - 在并行计算的时候,这个数据会在多个线程中同时被使用 - 是不是在对应程序的部分这个数据要上锁
+        cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
+                           [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, img_ptr, &g_voxel_for_render, obs_time ); } );
         /// @attention 原版的程序在渲染点云上就没有问题 | 只是在immesh中的record的部分有问题的(使用这个部分会导致段错误) | 注意这里发布RGB点云是另一个线程进行处理的
-        thread_render_pts_in_voxel(0, numbers_of_voxels , img_ptr, &g_voxel_for_render, obs_time);
+//        thread_render_pts_in_voxel(0, numbers_of_voxels , img_ptr, &g_voxel_for_render, obs_time);
+//        vec_3 pt_w;
+//        vec_3 rgb_color;
+//        double u, v;
+//        double pt_cam_norm;
+//        Common_tools::Timer tim;
+//        tim.tic();
+//
+//        /// @bug 在正常执行中显示voxel_ptr: {use count -872412972 , weak count 32762} 说明这个指针本身都出现了问题
+//        RGB_voxel_ptr voxel_ptr = std::make_shared<RGB_Voxel>(0.0, 0.0, 0.0);
+//
+//        for (int voxel_idx = 0; voxel_idx < numbers_of_voxels; voxel_idx++)
+//        {
+//            // voxel_ptr指向当前的voxel | 应该不会存在其他部分来同时访问这个voxel的值啊... voxel_idx 应该不会重复, 但是voxel_ptr获取对应元素的时候应该会出现同时访问的情况
+//            g_mutex_voxel_ptr_process.lock();
+//            voxel_ptr = g_voxel_for_render[ voxel_idx ];
+//            g_mutex_voxel_ptr_process.unlock();
+//
+//            if( voxel_ptr == nullptr  || voxel_ptr->m_pts_in_grid.empty())
+//                continue;
+//
+//            if (voxel_ptr.use_count() > reasonable_threshold || voxel_ptr.use_count() < 0) {
+//                // 处理异常引用计数情况
+//                return;
+//            }
+//            /// @bug 这里在实际运行时容易出现问题 —— 然后导致voxel_ptr->m_pts_in_grid.size(): 18446577512494100572 所以在后面参数使用get_pos()的时候直接报错 —— 本身这个get_pos()函数是没有问题的
+//            // 是不是g_voxel_for_render的值在使用的时候被修改了, 导致这里voxel_ptr的指向的内存就出现了问题
+////            LOG(INFO) << "[voxel_idx]: " << voxel_idx  << " | numbers_of_voxels: " << numbers_of_voxels <<" | voxel_ptr->m_pts_in_grid.size(): " << voxel_ptr->m_pts_in_grid.size() ;
+//
+//            for ( int pt_idx = 0; pt_idx < voxel_ptr->m_pts_in_grid.size(); pt_idx++ )
+//            {
+//                pt_w = voxel_ptr->m_pts_in_grid[pt_idx]->get_pos();
+//                if ( img_ptr->project_3d_point_in_this_img( pt_w, u, v, nullptr, 1.0 ) == false )
+//                {
+//                    continue;
+//                }
+//
+//                pt_cam_norm = ( pt_w - img_ptr->m_pose_w2c_t ).norm();
+//                // 在图像上获取点云的颜色信息 | 然后对这个voxel中的所有点云的颜色信息进行更新
+//                rgb_color = img_ptr->get_rgb( u, v, 0 );
+//
+//                // int RGB_pts::update_rgb( const vec_3& rgb, const double obs_dis, const vec_3 obs_sigma, const double obs_time, const double current_exposure_time )
+//                if (  voxel_ptr->m_pts_in_grid[pt_idx]->update_rgb(
+//                        rgb_color, pt_cam_norm, vec_3( image_obs_cov, image_obs_cov, image_obs_cov ), obs_time ) )
+//                {
+//                    render_pts_count++;
+//                }
+//            }
+//        }
     }
-    else
-    {
-        int num_of_threads = std::min( 8 * 2, ( int ) numbers_of_voxels );
-        // results.clear();
-        results.resize( num_of_threads );
-        tim.tic( "Com" );
-        for ( int thr = 0; thr < num_of_threads; thr++ )
-        {
-            // cv::Range range(thr * pt_size / num_of_threads, (thr + 1) * pt_size / num_of_threads);
-            int start = thr * numbers_of_voxels / num_of_threads;
-            int end = ( thr + 1 ) * numbers_of_voxels / num_of_threads;
-            results[ thr ] = m_thread_pool_ptr->commit_task( thread_render_pts_in_voxel, start, end, img_ptr, &g_voxel_for_render, obs_time );
-        }
-        g_cost_time_logger.record( tim, "Com" );
-        tim.tic( "wait_Opm" );
-        for ( int thr = 0; thr < num_of_threads; thr++ )
-        {
-            double cost_time = results[ thr ].get();
-            cost_time_logger_render.record( std::string( "T_" ).append( std::to_string( thr ) ), cost_time );
-        }
-        g_cost_time_logger.record( tim, "wait_Opm" );
-        cost_time_logger_render.record( tim, "wait_Opm" );
-    }
+
+//    else
+//    {
+//        int num_of_threads = std::min( 8 * 2, ( int ) numbers_of_voxels );
+//        // results.clear();
+//        results.resize( num_of_threads );
+//        tim.tic( "Com" );
+//        for ( int thr = 0; thr < num_of_threads; thr++ )
+//        {
+//            // cv::Range range(thr * pt_size / num_of_threads, (thr + 1) * pt_size / num_of_threads);
+//            int start = thr * numbers_of_voxels / num_of_threads;
+//            int end = ( thr + 1 ) * numbers_of_voxels / num_of_threads;
+//            results[ thr ] = m_thread_pool_ptr->commit_task( thread_render_pts_in_voxel, start, end, img_ptr, &g_voxel_for_render, obs_time );
+//        }
+//        g_cost_time_logger.record( tim, "Com" );
+//        tim.tic( "wait_Opm" );
+//        for ( int thr = 0; thr < num_of_threads; thr++ )
+//        {
+//            double cost_time = results[ thr ].get();
+//            cost_time_logger_render.record( std::string( "T_" ).append( std::to_string( thr ) ), cost_time );
+//        }
+//        g_cost_time_logger.record( tim, "wait_Opm" );
+//        cost_time_logger_render.record( tim, "wait_Opm" );
+//    }
+
     // ANCHOR - record photometric error
     // printf( "Image frame = %d, count = %d, acc_PT = %.3f, avr_PE = %.3f\r\n", img_ptr->m_frame_idx, long( img_ptr->m_acc_render_count ),
     //         double( img_ptr->m_acc_photometric_error), double( img_ptr->m_acc_photometric_error) / long(img_ptr->m_acc_render_count ) );

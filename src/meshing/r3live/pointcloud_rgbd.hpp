@@ -129,6 +129,9 @@ class RGB_pts
         m_N_rgb = 0;
         m_obs_dis = 0;
         m_last_obs_time = 0;
+        m_pos[0] = 0;
+        m_pos[1] = 0;
+        m_pos[2] = 0;
 #if IF_DBG_COLOR
         int r = g_rng.uniform( 0, 256 );
         int g = g_rng.uniform( 0, 256 );
@@ -255,7 +258,7 @@ struct Global_map
     int                       m_map_minor_version = R3LIVE_MAP_MINOR_VERSION;
     int                       m_if_get_all_pts_in_boxes_using_mp = 1;
     std::vector< RGB_pt_ptr > m_rgb_pts_vec;        // 地图中所有的RGB_pts的储存器
-    std::vector< RGB_voxel_ptr > m_voxel_vec;
+    std::vector< RGB_voxel_ptr > m_voxel_vec;       // 地图中所有的voxel_pts的储存器
     // std::vector< RGB_pt_ptr >                    m_rgb_pts_in_recent_visited_voxels;
     std::shared_ptr< std::vector< RGB_pt_ptr > > m_pts_rgb_vec_for_projection = nullptr;
     std::shared_ptr< std::mutex >                m_mutex_pts_vec;
@@ -340,7 +343,7 @@ struct Global_map
     }
 };
 
-void render_pts_in_voxels_mp( std::shared_ptr< Image_frame > &img_ptr, std::unordered_set< RGB_voxel_ptr > *voxels_for_render,
+void render_pts_in_voxels_mp( const std::shared_ptr< Image_frame > &img_ptr, std::unordered_set< RGB_voxel_ptr > *voxels_for_render,
                               const double &obs_time = 0 );
 
 

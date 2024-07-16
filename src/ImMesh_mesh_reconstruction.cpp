@@ -132,13 +132,21 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 
     int append_point_step = std::max( ( int ) 1, ( int ) std::round( frame_pts->points.size() / appending_pts_frame ) );
     Common_tools::Timer tim, tim_total;
-    // g_map_rgb_pts_mesh 对应的为全局地图 | 按理来说这里不应该有锁的操作 但是如果有其他部分需要使用全局地图的话就是需要这个锁 | 数据送入全局地图之后并没有进行降采样
+    // g_map_rgb_pts_mesh 对应的为全局地图 | 上锁可能是由于 incremental_mesh_reconstruction 这个函数是在线程池中进行commit_task执行的 | 数据送入全局地图之后并没有进行降采样
     g_mutex_append_map.lock();
-    g_map_rgb_pts_mesh.append_points_to_global_map( *frame_pts, frame_idx, nullptr, append_point_step );
-    std::unordered_set< std::shared_ptr< RGB_Voxel > > *voxels_recent_visited = &g_map_rgb_pts_mesh.m_voxels_recent_visited;
+    /// @bug 有时候也会出现这里有问题的debug信息
+    if( !(g_map_rgb_pts_mesh.append_points_to_global_map( *frame_pts, frame_idx, nullptr, append_point_step )))
+    {
+        g_mutex_append_map.unlock();
+        return;
+    }
+//    std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited = g_map_rgb_pts_mesh.m_voxels_recent_visited;
     g_mutex_append_map.unlock();
     LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the append_points_to_global_map ";
 
+    g_map_rgb_pts_mesh.m_mutex_m_box_recent_hitted->lock();
+    std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited = g_map_rgb_pts_mesh.m_voxels_recent_visited;
+    g_map_rgb_pts_mesh.m_mutex_m_box_recent_hitted->unlock();
 
     /*** 位姿变换 ***/
     Eigen::Matrix3d rot_i2w = pose_q.toRotationMatrix();
@@ -151,7 +159,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     t_w2c = rot_i2w * extR * camera_ext_t + extR * extT + pos_i2w;
 
 
-
     std::shared_ptr<Image_frame> image_pose = std::make_shared<Image_frame>(cam_k);
     image_pose->set_pose(eigen_q(R_w2c), t_w2c);
     image_pose->m_img = img;
@@ -159,7 +166,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     image_pose->m_timestamp = ros::Time::now().toSec();
     image_pose->init_cubic_interpolation();
     image_pose->image_equalize();
-
 
 
     /// @attention 突然感觉这个函数的作用不大 - 基本上是不需要被使用的(这个生成的数据后面也没有被使用)
@@ -176,13 +182,16 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 
     //    auto idx = frame_idx;
 
-//    g_mutex_colored_points.lock();
-    render_pts_in_voxels_mp(image_pose, voxels_recent_visited , image_pose->m_timestamp );
-//    g_mutex_colored_points.unlock();
 
+    /// @bug render_pts_in_voxels_mp的voxel_ptr有问题(越界导致段错误) - 所以我怀疑是输入的voxel_ptr集合(即voxels_recent_visited)出现问题 (貌似不是这个部分的问题...没找到)
+    // 因为这里会操作全局地图 中的部分voxel的m_ptr_in_grid这个函数, 所以上锁
+    g_mutex_append_map.lock();
+//    render_pts_in_voxels_mp(image_pose, &g_map_rgb_pts_mesh.m_voxels_recent_visited , image_pose->m_timestamp );
+    render_pts_in_voxels_mp(image_pose, &voxels_recent_visited , image_pose->m_timestamp );
+    g_mutex_append_map.unlock();
     g_map_rgb_pts_mesh.m_last_updated_frame_idx++;
-    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
 
+    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
 
 
     /*** 发布线程 ***/
@@ -193,11 +202,11 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         flag = 1;           // 因为创建线程写在了while()循环中, 为了避免线程的重复创建，这里设置flag
     }
 
-
-
     /*** 完成render之后的mesh重建过程 ***/
     std::atomic< int >    voxel_idx( 0 );
     std::mutex mtx_triangle_lock, mtx_single_thr;
+
+//     为什么 迭代器 放在了tbb外面(反正没有使用 —— 基本没有问题 )
     typedef std::unordered_set< std::shared_ptr< RGB_Voxel > >::iterator set_voxel_it;
     std::unordered_map< std::shared_ptr< RGB_Voxel >, Triangle_set >     removed_triangle_list;
     std::unordered_map< std::shared_ptr< RGB_Voxel >, Triangle_set >     added_triangle_list;
@@ -206,11 +215,10 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     tim.tic();
     tim_total.tic();
 
-
     try
     {
         /// @attention Cpp的并行计算库tbb(又相当于是创建了新的多个线程来处理数据) | parallel_for_each 需要指定一个搜索范围+一个lambda表达式 | lambda的形参 对应就是从voxels_recent_visited取出来的voxel数据
-        tbb::parallel_for_each( voxels_recent_visited->begin(), voxels_recent_visited->end(), [ & ]( const std::shared_ptr< RGB_Voxel > &voxel ) {
+        tbb::parallel_for_each( voxels_recent_visited.begin(), voxels_recent_visited.end(), [ & ]( const std::shared_ptr< RGB_Voxel > &voxel ) {
             if ( ( voxel->m_meshing_times >= 1 ) || ( voxel->m_new_added_pts_count < 0 ) )
             {
                 return;
@@ -239,6 +247,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 
             // Voxel-wise mesh pull
             pts_in_voxels = retrieve_neighbor_pts_kdtree( pts_in_voxels );
+            // 这里虽然是删除, 但是不会影响原始数据(所以与rendering线程崩溃的部分没有关系)
             pts_in_voxels = remove_outlier_pts( pts_in_voxels, voxel );
 
             // pts_in_voxels 对应的是所有RGB点 | relative_point_indices 获取到所有点的id号
@@ -670,7 +679,7 @@ void service_reconstruct_mesh()
 //                });
 
                 /// @bug 全靠gpt修改出来的代码 神奇 本来我都想去不再使用这个线程池,直接处理数据了
-                    // 这里是不是会让 incremental_mesh_reconstruction 也执行多次
+                    // 由于这部分使用线程池,在这里又是一个while循环 - 可能出现incremental_mesh_reconstruction同时被多处执行
 //                g_thread_pool_rec_mesh->commit_task([&]() {
 //                    incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
 //                                                    data_pack_front.m_img,
@@ -688,7 +697,7 @@ void service_reconstruct_mesh()
 
             }
 
-//        std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
+        std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
     }
 }
 
