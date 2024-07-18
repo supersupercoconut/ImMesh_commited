@@ -193,12 +193,12 @@ int main( int argc, char **argv )
     // Setup window
     pcl::console::setVerbosityLevel( pcl::console::L_ALWAYS );  // 设置pcl的日志级别
 //    Common_tools::printf_software_version();
-    printf_program( "ImMesh: An Immediate LiDAR Localization and Meshing Framework" );
+    printf_program( "ImMesh" );
 
     ros::init( argc, argv, "laserMapping" );
     voxel_mapping.init_ros_node();  // 初始化ros节点
     LOG(INFO)<<"------Starting laserMapping node------";
-    GLFWwindow *window = g_gl_camera.init_openGL_and_ImGUI( "ImMesh: An Immediate LiDAR Localization and Meshing Framework", 1, voxel_mapping.m_GUI_font_size );
+    GLFWwindow *window = g_gl_camera.init_openGL_and_ImGUI( "ImMesh", 1, voxel_mapping.m_GUI_font_size );
     // 只需要知道glad对应的openGL中的一些基本功能即可
     if ( !gladLoadGLLoader( ( GLADloadproc ) glfwGetProcAddress ) )
     {
@@ -206,7 +206,7 @@ int main( int argc, char **argv )
         return -1;
     }
 
-    //  shader 着色器 -> 应该是方便gui可视化(用在openGL部分)
+    //  shader 着色器 -> 应该是方便gui可视化(用在openGL部分) | 这里设置多种shader
     Common_tools::Point_cloud_shader  g_pt_shader;
     init_openGL_shader();
     if ( window == nullptr )
@@ -244,10 +244,10 @@ int main( int argc, char **argv )
     /// @attention 这里在新建线程的时候 —— std::thread() 中第一个参数是线程中调用的函数 | 之后输入的参数应该是这个函数中对应的形参 | 如果要调用类中的成员函数，第二个参数应该是类的实例化对象
     // 新建两个线程 | thr_mapping 用于更新地图(估计也包含了mesh的生成,注释掉下一个线程估计只是没有办法进行可视化) | thr 用于刷新和同步三角形 )
     std::thread thr_mapping = std::thread( &Voxel_mapping::service_LiDAR_update, &voxel_mapping );
+    // 注释之后，整个系统中没有方法进行mesh图生成 | rviz里面还是会生成点云地图(整理好用于 imGUI 中需要的数据)
+    std::thread thr = std::thread( service_refresh_and_synchronize_triangle, 100 );
 //    std::thread thr_mapping = std::thread( &Voxel_mapping::service_lvisam_odometry, &voxel_mapping );
-    std::thread thr = std::thread( service_refresh_and_synchronize_triangle, 100 );   // 注释之后，整个系统中没有方法进行mesh图生成 | rviz里面还是会生成点云地图
-    // 里程计信息正常work(关闭了对应的Mesh重建部分)
-//    std::thread thr_mapping = std::thread( &Voxel_mapping::service_LiDAR_update, &voxel_mapping );
+
     std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
 
     Common_tools::Timer disp_tim;
@@ -423,6 +423,7 @@ int main( int argc, char **argv )
             print_help_window( &g_display_help_win );
         }
 
+        // 这部分应该是点云显示模块
         if ( g_display_camera_pose_window )
         {
             g_gl_camera.draw_camera_window( g_display_camera_pose_window );

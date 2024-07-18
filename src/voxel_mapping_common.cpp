@@ -955,9 +955,9 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     nh.param< double >( "outlier_threshold", m_outlier_threshold, 78 );
     nh.param< bool >( "publish/effect_point_pub", m_effect_point_pub, false );
     nh.param< int >( "publish/pub_point_skip", m_pub_point_skip, 1 );
-    nh.param< double >( "meshing/distance_scale", m_meshing_distance_scale, 1.0 );
+    nh.param< double >( "meshing/distance_scale", m_meshing_distance_scale, 0.7 );
     nh.param< double >( "meshing/points_minimum_scale", m_meshing_points_minimum_scale, 0.1 );
-    nh.param< double >( "meshing/voxel_resolution", m_meshing_voxel_resolution, 0.4 );
+    nh.param< double >( "meshing/voxel_resolution", m_meshing_voxel_resolution, 0.2 );
     nh.param< double >( "meshing/region_size", m_meshing_region_size, 10.0 );
     nh.param< int >( "meshing/if_draw_mesh", m_if_draw_mesh, 1.0 );
     nh.param< int >( "meshing/enable_mesh_rec", m_if_enable_mesh_rec, 1 );

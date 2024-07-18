@@ -49,7 +49,8 @@ vec_3f        g_axis_min_max[ 2 ];
 
 struct Region_triangles_shader
 {
-    std::vector< vec_3f >               m_triangle_pt_vec;
+    std::vector< vec_3f >               m_triangle_pt_vec;                  // 当前region中所有triangle中的顶点数据
+    std::vector< vec_3f >               m_triangle_color_vec;               // 当前region中所有triangle中的所有顶点的颜色数据
     Common_tools::Triangle_facet_shader m_triangle_facet_shader;
     int                                 m_need_init_shader = true;
     int                                 m_need_refresh_shader = true;
@@ -67,7 +68,8 @@ struct Region_triangles_shader
         std::unique_lock< std::mutex > lock( *m_mutex_ptr );
         if ( m_if_set_color )
         {
-            m_triangle_facet_shader.set_pointcloud( m_triangle_pt_vec, g_axis_min_max, 2 );
+//            m_triangle_facet_shader.set_pointcloud( m_triangle_pt_vec, g_axis_min_max, 2 );
+            m_triangle_facet_shader.set_pointcloud( m_triangle_pt_vec, m_triangle_color_vec, 2 );
         }
         else
         {
@@ -81,10 +83,12 @@ struct Region_triangles_shader
         // TODO: synchronized data buffer here:
         std::unique_lock< std::mutex > lock( *m_mutex_ptr );
         m_triangle_pt_vec.resize( tri_angle_set.size() * 3 );
+        m_triangle_color_vec.resize( tri_angle_set.size() * 3 );
         // cout << "Number of pt_size = " << m_triangle_pt_list.size() << endl;
         int count = 0;
         for ( Triangle_set::iterator it = tri_angle_set.begin(); it != tri_angle_set.end(); it++ )
         {
+            // 平滑的作用大致就是去除一些噪声信息之类的 - 实际没有尝试去掉的效果
             for ( size_t pt_idx = 0; pt_idx < 3; pt_idx++ )
             {
                 if ( g_map_rgb_pts_mesh.m_rgb_pts_vec[ ( *it )->m_tri_pts_id[ pt_idx ] ]->m_smoothed == false )
@@ -99,6 +103,21 @@ struct Region_triangles_shader
             m_triangle_pt_vec[ count ] = pt_a.cast< float >();
             m_triangle_pt_vec[ count + 1 ] = pt_b.cast< float >();
             m_triangle_pt_vec[ count + 2 ] = pt_c.cast< float >();
+
+            // 补充颜色信息
+            /// TODO 这里获取直接获取颜色信息的话，会显得的之前在mesh重建里面打包的数据有些多余
+            if(m_if_set_color)
+            {
+                for(auto i = 0; i < 3; ++i)
+                {
+                    double* rgb = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ( *it )->m_tri_pts_id[ i ] ]->m_rgb;
+                    vec_3f color(static_cast<float>(rgb[0]), static_cast<float>(rgb[1]), static_cast<float>(rgb[2]));
+//                    m_triangle_color_vec.push_back(color);
+                    m_triangle_color_vec[count+i] = color;
+                }
+            }
+
+
             count = count + 3;
         }
     }
@@ -149,7 +168,7 @@ struct Region_triangles_shader
         {
             Triangle_set triangle_set;
             sync_triangle_set->get_triangle_set( triangle_set, true );      // 这里设置 m_if_required_synchronized 重新设置为false
-            // triangle_set即对应着需要更新的三角形数据
+            // triangle_set 即对应着当前这个region中的所有triangle数据 | unparse_triangle_set_to_vector获取m_triangle_pt_vec的点坐标
             unparse_triangle_set_to_vector( triangle_set );
             get_axis_min_max( axis_min_max );
             std::this_thread::sleep_for( std::chrono::microseconds( 100 ) );
@@ -166,11 +185,12 @@ struct Region_triangles_shader
             m_need_init_shader = false;
         }
 
-        // m_triangle_pt_vec对应的数据进行openGL的展示 | 创建这些数据在main函数中启动的线程中 (service_refresh_and_synchronize_triangle)
+        // m_triangle_pt_vec对应的数据进行openGL的展示 | 创建这些数据在main函数中启动的线程中 (service_refresh_and_synchronize_triangle) | 这个region中对应shader中的顶点数据要多一些
         if ( m_triangle_pt_vec.size() < 3 )
         {
             return;
         }
+        // 相当于是组装数据 - 将m_triangle_pt_vec中的顶点数据
         if ( m_need_refresh_shader )
         {
             init_pointcloud();
@@ -223,24 +243,21 @@ extern bool          g_display_face;
 std::vector< vec_3 > pt_camera_traj;
 
 // ANCHOR - synchronize_triangle_list_for_disp
-
 /// @brief
 /*
- * 进行display要与openGL相关(即需要一个shader来处理) | 那么最后形成mesh平面的时候,最后还是需要通过本文中使用的GUI来显示
- *
- *
+ * 1. 获取当前已经整理好的mesh数据 -> 使用openGL进行处理
  */
-
 void synchronize_triangle_list_for_disp()
 {
-    // 对应的所有需要被更新的triangle信息
     int region_size = g_triangles_manager.m_triangle_set_vector.size();
     bool if_force_refresh = g_force_refresh_triangle;
     for ( int region_idx = 0; region_idx < region_size; region_idx++ )
     {
+        // 这里虽然说是 Sync_triangle_set 但其实际对应的是一个region中所有triangle数据
         Sync_triangle_set *                        sync_triangle_set_ptr = g_triangles_manager.m_triangle_set_vector[ region_idx ];
         // Region_triangles_shader 管理一个区域中的triangle信息 - shader对应的就是openGL中的信息
         std::shared_ptr< Region_triangles_shader > region_triangles_shader_ptr = nullptr;
+        // g_map_region_triangles_shader 是从 <Sync_triangle_set *, std::shared_ptr< Region_triangles_shader >> 进行查找
         if ( g_map_region_triangles_shader.find( sync_triangle_set_ptr ) == g_map_region_triangles_shader.end() )
         {
             // new a shader
@@ -257,6 +274,7 @@ void synchronize_triangle_list_for_disp()
 
         if ( region_triangles_shader_ptr != nullptr )
         {
+            // g_force_refresh_triangle 估计就是强制让整个openGL目前显示出来的Mesh重新显示 - 在选择颜色设置的时候就会让整体mesh重新生成
             if ( g_force_refresh_triangle && if_force_refresh == false )
             {
                 if_force_refresh = true;
@@ -266,7 +284,7 @@ void synchronize_triangle_list_for_disp()
             {
                 sync_triangle_set_ptr->m_if_required_synchronized = true;
             }
-
+            // 对一个region中的mesh进行更新显示
             region_triangles_shader_ptr->synchronized_from_region( sync_triangle_set_ptr, g_axis_min_max );
         }
     }
@@ -296,7 +314,7 @@ void draw_triangle( const Cam_view &gl_cam )
     {
         g_region_triangles_shader_vec[ region_idx ]->m_triangle_facet_shader.m_if_draw_face = g_display_face;
         g_region_triangles_shader_vec[ region_idx ]->m_if_set_color = g_mesh_if_color;
-        // draw是自定义的一个函数，是mesh重建的关键
+        // draw是自定义的一个函数，是mesh重建的关键 | 在另一个线程中已经完成了 g_region_triangles_shader_vec 中每一个shader对应的triangle顶点数据
         g_region_triangles_shader_vec[ region_idx ]->draw( gl_cam );
     }
 }

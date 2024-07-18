@@ -169,6 +169,7 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
         {
             res_add_triangles.insert( std::make_shared< Triangle >( tri ) );
         }
+
     }
 
     for ( auto &it : all_remove_triangles_list.m_map_3d_hash_map )
@@ -178,45 +179,46 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
             res_remove_triangles.insert( it.second.first );
         }
     }
+}
 
-
-//    Hash_map_3d< long, std::pair< Triangle_ptr, bool > > all_remove_triangles_list;
-//
-//    for ( const Triangle_ptr &tri_ptr : remove_triangles )
-//    {
-//        // 设置为true, 即代表需要被增加
-//        all_remove_triangles_list.insert( tri_ptr->m_tri_pts_id[ 0 ], tri_ptr->m_tri_pts_id[ 1 ], tri_ptr->m_tri_pts_id[ 2 ],
-//                                          std::make_pair( tri_ptr, true ) );
-//    }
-//    for ( int i = 0; i < add_triangles.size(); i += 3 )
-//    {
-//        // 新三角
-//        Triangle                         tri( add_triangles[ i ], add_triangles[ i + 1 ], add_triangles[ i + 2 ] );
-//
-//        std::pair< Triangle_ptr, bool > *temp_pair_ptr =
-//            all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
-//        if ( temp_pair_ptr != nullptr )
-//        {
-//            temp_pair_ptr->second = false;
+// 函数重载 —— 将当前存在的三角与新来的三角都放到一起(新来的三角需要插入, 当前存在的三角需要更新颜色)
+void triangle_compare( const Triangle_set &remove_triangles, const std::vector< long > &add_triangles, Triangle_set &res_remove_triangles,
+                       Triangle_set &res_add_triangles /*Triangle_set *exist_triangles*/ )
+{
+    Hash_map_3d< long, std::pair< Triangle_ptr, bool > > all_remove_triangles_list;
+    for ( const Triangle_ptr &tri_ptr : remove_triangles )
+    {
+        all_remove_triangles_list.insert( tri_ptr->m_tri_pts_id[ 0 ], tri_ptr->m_tri_pts_id[ 1 ], tri_ptr->m_tri_pts_id[ 2 ],
+                                          std::make_pair( tri_ptr, true ) );
+    }
+    for ( int i = 0; i < add_triangles.size(); i += 3 )
+    {
+        Triangle                         tri( add_triangles[ i ], add_triangles[ i + 1 ], add_triangles[ i + 2 ] );
+        std::pair< Triangle_ptr, bool > *temp_pair_ptr =
+                all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
+        if ( temp_pair_ptr != nullptr )
+        {
+            temp_pair_ptr->second = false;
+            res_add_triangles.insert( temp_pair_ptr->first );
 //            if ( exist_triangles != nullptr )
 //            {
 //                exist_triangles->insert( temp_pair_ptr->first );
 //            }
-//        }
-//        else
-//        {
-//            res_add_triangles.insert( std::make_shared< Triangle >( tri ) );
-//        }
-//    }
-//
-//    for ( auto &it : all_remove_triangles_list.m_map_3d_hash_map )
-//    {
-//        // 这里就是上面bool进行赋值的true或者false
-//        if ( it.second.second )
-//        {
-//            res_remove_triangles.insert( it.second.first );
-//        }
-//    }
+        }
+        else
+        {
+            res_add_triangles.insert( std::make_shared< Triangle >( tri ) );
+        }
+
+    }
+
+    for ( auto &it : all_remove_triangles_list.m_map_3d_hash_map )
+    {
+        if ( it.second.second )
+        {
+            res_remove_triangles.insert( it.second.first );
+        }
+    }
 }
 
 

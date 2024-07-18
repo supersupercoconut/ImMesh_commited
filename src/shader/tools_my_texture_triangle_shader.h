@@ -73,6 +73,7 @@ class Triangle_facet_shader
 
     void init( std::string shader_path )
     {
+        // 输入 顶点 + 片元 shader(这里对应的应该是openGL中的功能)
         std::string vertex_shader = std::string( shader_path ).append( "triangle_facets.vs" );
         std::string fragment_shader = std::string( shader_path ).append( "triangle_facets.fs" );
         m_shader_facet = std::make_shared< Shader >( vertex_shader.c_str(), fragment_shader.c_str() );
@@ -88,6 +89,9 @@ class Triangle_facet_shader
     // template < typename T >
     // void set_pointcloud( std::vector< Eigen::Matrix< float, 6, 1 > >& _pts_color_of_maps )
     int if_have_init_data_buffer = false;
+
+
+    /*** 这部分的作用感觉就是定义一个buffer来存放从CPU到GPU的数据 ***/
     void init_data_buffer()
     {
         if ( if_have_init_data_buffer )
@@ -142,6 +146,7 @@ class Triangle_facet_shader
 
     void set_pointcloud( std::vector< eigen_vec_f<3> >& _pts_pos, vec_3f * axis_min_max = nullptr, int select_axis = 2)
     {
+        // vertice shader中就通常就需要 (1) 位置 (2) 法线 (3) 颜色 (4)纹理坐标 - 如果使用image进行纹理映射
         m_pts_pos_vector.resize(_pts_pos.size());
         m_pts_normal_vector.resize(_pts_pos.size());
         m_pts_color_vector.resize( _pts_pos.size() );
@@ -158,10 +163,45 @@ class Triangle_facet_shader
             }
         }
         set_color_by_axis(axis_min_max, select_axis);
+        // 注意一下 init_data_buffer - 这里可能与openGL的显示部分有关系
         init_data_buffer();
     }
+    // 函数重载
 
-    
+    void set_pointcloud( std::vector< eigen_vec_f<3> >& _pts_pos, std::vector< eigen_vec_f<3> >& color, int select_axis = 2)
+    {
+        // vertice shader中就通常就需要 (1) 位置 (2) 法线 (3) 颜色 (4)纹理坐标 - 如果使用image进行纹理映射
+        m_pts_pos_vector.resize(_pts_pos.size());
+        m_pts_normal_vector.resize(_pts_pos.size());
+        m_pts_color_vector.resize( _pts_pos.size() );
+        // 每次处理三个点 | m_pts_pos_vector以及m_pts_normal_vector中每一个元素都是一个vec_3f 但是m_pts_color_vector不是, 其应该是一个
+        for ( int i = 0; i < _pts_pos.size(); i+=3 )
+        {
+            vec_3f normal = ( _pts_pos[ i + 1 ] - _pts_pos[ i ] ).cross( _pts_pos[ i + 2 ] - _pts_pos[ i ] );
+            for ( int j = 0; j < 3; j++ )
+            {
+                // i+j代表的是顶点
+                m_pts_pos_vector[ i + j ] = _pts_pos[ i + j ];
+                m_pts_normal_vector[ i + j ] = normal;
+//                if(axis_min_max == nullptr)
+//                    m_pts_color_vector[ i + j ] = ( 255 << 16 ) | ( 255 << 8 ) | 255;
+                int r = static_cast<int>(color[i + j][0]);
+                int g = static_cast<int>(color[i + j][1]);
+                int b = static_cast<int>(color[i + j][2]);
+//
+//                // 确保值在 0-255 范围内
+                r = std::min(255, std::max(0, r));
+                g = std::min(255, std::max(0, g));
+                b = std::min(255, std::max(0, b));
+//
+//                // 组合为单个整数 RGB 值
+                m_pts_color_vector[i + j] = (r << 16) | (g << 8) | b;
+            }
+        }
+//        set_color_by_axis(axis_min_max, select_axis);
+        // 注意一下 init_data_buffer - 这里可能与openGL的显示部分有关系
+        init_data_buffer();
+    }
 
     void draw( glm::mat4 proj_mat, glm::mat4 pose_mat )
     {

@@ -95,8 +95,6 @@ struct Rec_mesh_data_package
 
 
 
-
-
 std::mutex                                  g_mutex_data_package_lock;
 std::list< Rec_mesh_data_package >          g_rec_mesh_data_package_list;
 std::shared_ptr< Common_tools::ThreadPool > g_thread_pool_rec_mesh = nullptr;
@@ -110,7 +108,6 @@ LiDAR_frame_pts_and_pose_vec       g_ponintcloud_pose_vec;
 // 函数重载 - 使用所有数据的mesh重建函数 - 包含点云渲染以及mesh重建
 void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr frame_pts, cv::Mat img, Eigen::Quaterniond pose_q, Eigen::Vector3d pose_t, int frame_idx )
 {
-
     // g_flag_pause应该就是一个与GUI界面联动部分
     while ( g_flag_pause )
     {
@@ -128,8 +125,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
                                                          frame_pts->points[ i ].intensity );
     }
     g_eigen_vec_vec[ frame_idx ].second = pose_vec;
-
-
+    
     int append_point_step = std::max( ( int ) 1, ( int ) std::round( frame_pts->points.size() / appending_pts_frame ) );
     Common_tools::Timer tim, tim_total;
     // g_map_rgb_pts_mesh 对应的为全局地图 | 上锁可能是由于 incremental_mesh_reconstruction 这个函数是在线程池中进行commit_task执行的 | 数据送入全局地图之后并没有进行降采样
@@ -175,7 +171,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 //    g_map_rgb_pts_mesh.selection_points_for_projection(image_pose, &rgb_pts_vec, &pts_2d_vec, 10);
 //    g_mutex_projection_points.unlock();
 //    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the selection_points_for_projection ";
-
+    /// TODO 尝试一下将rendering的全过程写在这个函数里面而不是使用函数调用 —— 或许是因为函数调用的时候出现了问题(主要是看mesh重建是直接放在这个函数里面了)
     /*** 渲染部分 ***/
 //    g_render_thread = std::make_shared< std::shared_future< void > >( g_thread_pool_rec_mesh->commit_task(
 //            render_pts_in_voxels_mp, image_pose, &g_map_rgb_pts_mesh.m_voxels_recent_visited, image_pose->m_timestamp ) );
@@ -185,11 +181,13 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 
     /// @bug render_pts_in_voxels_mp的voxel_ptr有问题(越界导致段错误) - 所以我怀疑是输入的voxel_ptr集合(即voxels_recent_visited)出现问题 (貌似不是这个部分的问题...没找到)
     // 因为这里会操作全局地图 中的部分voxel的m_ptr_in_grid这个函数, 所以上锁
+
     g_mutex_append_map.lock();
 //    render_pts_in_voxels_mp(image_pose, &g_map_rgb_pts_mesh.m_voxels_recent_visited , image_pose->m_timestamp );
     render_pts_in_voxels_mp(image_pose, &voxels_recent_visited , image_pose->m_timestamp );
-    g_mutex_append_map.unlock();
     g_map_rgb_pts_mesh.m_last_updated_frame_idx++;
+    g_mutex_append_map.unlock();
+
 
     LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
 
@@ -210,6 +208,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     typedef std::unordered_set< std::shared_ptr< RGB_Voxel > >::iterator set_voxel_it;
     std::unordered_map< std::shared_ptr< RGB_Voxel >, Triangle_set >     removed_triangle_list;
     std::unordered_map< std::shared_ptr< RGB_Voxel >, Triangle_set >     added_triangle_list;
+    std::unordered_map< std::shared_ptr< RGB_Voxel >, Triangle_set >     existing_triangle_list;
 
     g_mutex_reconstruct_mesh.lock();
     tim.tic();
@@ -276,7 +275,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
              * 1. 注意这里说的是都是一些2D结构: 凸包点在是外围的点 内部点是在凸包点构成几何形状中的点
              * 2. convex_hull_index + inner_pts_index 保存的对应的点的id号 | 调用CGAL算法进行三角剖分
              * 3. add_triangle_idx作为返回值 | 关于上面的convex_hull_index + inner_pts_index只是划分一个2D平面上点的分布, 生成mesh的点可能是convex也可能是inner
-             *    add_triangle_idx 直接将当前voxel中的所有点都进行了三角剖分
+             *    add_triangle_idx 为当前 voxel 中的所有点都进行了三角剖分之后的结果
              * */
             voxel->m_short_axis.setZero();
             std::vector< long > add_triangle_idx = delaunay_triangulation( pts_in_voxels, voxel->m_long_axis, voxel->m_mid_axis,
@@ -289,7 +288,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
                     g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ]->m_is_inner_pt = true;
                     g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ]->m_parent_voxel = voxel;
                 }
-
             }
             // 是不是convex_hull_index中的点的作用不 这里给一个false之后就不用管了
             for ( auto p : convex_hull_index )
@@ -299,12 +297,13 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             }
 
             /** 从现在开始, 整个系统中最重要的数据结构出现了 —— Triangle_manager 在后续中被使用 **/
-            // 获取输入点云的所有triangle
+            /// TODO 这里需要整理一些 triangle的顶点信息 - 主要这些顶点的颜色信息是在哪里生成的
+            // triangles_sets 为这些点目前对应的所有triangle信息
             Triangle_set triangles_sets = g_triangles_manager.find_relative_triangulation_combination( relative_point_indices );
             Triangle_set triangles_to_remove, triangles_to_add, existing_triangle;
             // Voxel-wise mesh commit(所有应该构建出来的Mesh与已经存在的mesh对比)
             triangle_compare( triangles_sets, add_triangle_idx, triangles_to_remove, triangles_to_add, &existing_triangle );
-
+//            triangle_compare( triangles_sets, add_triangle_idx, triangles_to_remove, triangles_to_add );        // triangles_to_add 保留了当前所有的triangle数据
             // Refine normal index - 将新增的triangle以及已经存在的triangle进行修正 | 修正是整个平面的法向量
             for ( auto triangle_ptr : triangles_to_add )
             {
@@ -316,11 +315,11 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             {
                 correct_triangle_index( triangle_ptr, g_eigen_vec_vec[ frame_idx ].second.block( 4, 0, 3, 1 ), voxel->m_short_axis );
             }
-
-            std::unique_lock< std::mutex > lock( mtx_triangle_lock );
+            std::unique_lock< std::mutex > lock( mtx_triangle_lock );   // 对removed_triangle_list以及added_triangle_list进行上锁 保证tbb执行的时候不会出现同时读写问题
             // 这里只是做了关于add与remove的整理 将一个voxel与其对应的triangle进行了整理 | 具体要处理的部分还是要在pull模块处理掉
             removed_triangle_list.emplace( std::make_pair( voxel, triangles_to_remove ) );
             added_triangle_list.emplace( std::make_pair( voxel, triangles_to_add ) );
+//            existing_triangle_list.emplace( std::make_pair( voxel, existing_triangle ) );
 
             voxel_idx++;
         } );
@@ -337,6 +336,8 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         return;
     }
 
+    /*** tbb mesh重建部分已经完成 - 剩余部分就是对整体进行处理 ***/
+
     double              mul_thr_cost_time = tim.toc( " ", 0 );
     Common_tools::Timer tim_triangle_cost;
     int                 total_delete_triangle = 0, total_add_triangle = 0;
@@ -349,23 +350,56 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     }
 //    LOG(INFO) << "[incremental_mesh_reconstruction]: The count of deleted triangle is "<< total_delete_triangle;
 
-    /// @attention 每一个voxel都不保存triangle数据 - 直接使用一个完整triangle_manager来管理
-    for ( auto &triangle_list : added_triangle_list ) // added_triangle_list 对应目前这个voxel中所有的triangle
+    /*** 获取颜色信息 —— 因为颜色信息不断的即形更新 所以对于add_triangle_list以及existing_triangle_list 都需要设置颜色信息***/
+    // 好像放在这里不是很正确 | 在immesh里面保留了Triangle顶点到RGB点的序号是非常好的部分 —— 这样可以保证只需要给GUI同步数据的时候把这个颜色输入进去就可以
+//    for(auto& triangle_list : existing_triangle_list)
+//    {
+//        Triangle_set triangle_idx = triangle_list.second;
+//        for ( auto triangle_ptr : triangle_idx )
+//        {
+//            // 更新颜色信息
+//            for(auto j = 0; j < 3; ++j)
+//            {
+//                triangle_ptr->m_tri_pts_color[j][0] = g_map_rgb_pts_mesh.m_rgb_pts_vec[ triangle_ptr->m_tri_pts_id[ j ] ]->m_rgb[0];
+//                triangle_ptr->m_tri_pts_color[j][1] = g_map_rgb_pts_mesh.m_rgb_pts_vec[ triangle_ptr->m_tri_pts_id[ j ] ]->m_rgb[1];
+//                triangle_ptr->m_tri_pts_color[j][2] = g_map_rgb_pts_mesh.m_rgb_pts_vec[ triangle_ptr->m_tri_pts_id[ j ] ]->m_rgb[2];
+//            }
+//        }
+//    }
+
+    /// @attention 因为这里我不太想让triangle的部分获取全局地图数据 —— 所以有关全局地图的颜色信息都是在这里打包好输入给调用函数的
+
+    /// @attention 每一个voxel都不保存triangle数据 - 直接使用全局的triangle_manager来管理
+        // added_triangle_list 中包含着所有voxel需要被处理的数据
+    for ( auto &triangle_list : added_triangle_list )
     {
         Triangle_set triangle_idx = triangle_list.second;
         total_add_triangle += triangle_idx.size();
+        // 相当于是单独处理每一个voxel中的triangle数据
         for ( auto triangle_ptr : triangle_idx )
         {
+            double tmp_color[3][3] = {0};
+            // 补充生成三角顶点颜色 | j代表是第几个顶点
+            for(auto j = 0; j < 3; ++j)
+            {
+                tmp_color[j][0] = g_map_rgb_pts_mesh.m_rgb_pts_vec[ triangle_ptr->m_tri_pts_id[ j ] ]->m_rgb[0];
+                tmp_color[j][1] = g_map_rgb_pts_mesh.m_rgb_pts_vec[ triangle_ptr->m_tri_pts_id[ j ] ]->m_rgb[1];
+                tmp_color[j][2] = g_map_rgb_pts_mesh.m_rgb_pts_vec[ triangle_ptr->m_tri_pts_id[ j ] ]->m_rgb[2];
+            }
             // 输入Triangle三个顶点的数据 | 主要是有很重要的Synchronize_triangle的数据转换
+//            Triangle_ptr tri_ptr = g_triangles_manager.insert_triangle( triangle_ptr->m_tri_pts_id[ 0 ], triangle_ptr->m_tri_pts_id[ 1 ],
+//                                                                        triangle_ptr->m_tri_pts_id[ 2 ], tmp_color, 1 );
             Triangle_ptr tri_ptr = g_triangles_manager.insert_triangle( triangle_ptr->m_tri_pts_id[ 0 ], triangle_ptr->m_tri_pts_id[ 1 ],
                                                                         triangle_ptr->m_tri_pts_id[ 2 ], 1 );
             tri_ptr->m_index_flip = triangle_ptr->m_index_flip;
         }
     }
-//    LOG(INFO) << "[incremental_mesh_reconstruction]: The count of added triangle is "<< total_add_triangle;
+
+
 
     LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the insert_triangle";
     g_mutex_reconstruct_mesh.unlock();
+
 
     if ( g_fp_cost_time )
     {
@@ -387,13 +421,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         }
     }
 }
-
-
-
-
-
-
-
 
 
 
@@ -653,7 +680,7 @@ void service_reconstruct_mesh()
 //            }
             if(g_rec_color_data_package_list.size() > 10 )
             {
-                LOG(INFO) << "Poor real-time performance, current buffer size = " <<  g_rec_mesh_data_package_list.size();
+                LOG(INFO) << "Poor real-time performance, current buffer size = " <<  g_rec_color_data_package_list.size();
             }
             auto data_pack_front = g_rec_color_data_package_list.front();
             g_rec_color_data_package_list.pop_front();
@@ -680,20 +707,20 @@ void service_reconstruct_mesh()
 
                 /// @bug 全靠gpt修改出来的代码 神奇 本来我都想去不再使用这个线程池,直接处理数据了
                     // 由于这部分使用线程池,在这里又是一个while循环 - 可能出现incremental_mesh_reconstruction同时被多处执行
-//                g_thread_pool_rec_mesh->commit_task([&]() {
-//                    incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
-//                                                    data_pack_front.m_img,
-//                                                    data_pack_front.m_pose_q,
-//                                                    data_pack_front.m_pose_t,
-//                                                    data_pack_front.m_frame_idx);
-//                });
+                g_thread_pool_rec_mesh->commit_task([&]() {
+                    incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
+                                                    data_pack_front.m_img,
+                                                    data_pack_front.m_pose_q,
+                                                    data_pack_front.m_pose_t,
+                                                    data_pack_front.m_frame_idx);
+                });
 
                 // 这里感觉是在线程池里面重复执行这个函数的时候导致的错误
-                incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
-                                                data_pack_front.m_img,
-                                                data_pack_front.m_pose_q,
-                                                data_pack_front.m_pose_t,
-                                                data_pack_front.m_frame_idx);
+//                incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
+//                                                data_pack_front.m_img,
+//                                                data_pack_front.m_pose_q,
+//                                                data_pack_front.m_pose_t,
+//                                                data_pack_front.m_frame_idx);
 
             }
 

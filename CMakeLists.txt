@@ -3,7 +3,7 @@ project(ImMesh)
 
 SET(CMAKE_BUILD_TYPE "Release")
 
-ADD_COMPILE_OPTIONS(-std=c++14 )
+ADD_COMPILE_OPTIONS(-std=c++17 )
 
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
@@ -22,7 +22,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 
 # 优化策略设置 O1 与 O3 为什么程序出现的错误是不一样的
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=c++17 -g -O3 -ltbb -lboost_system -msse2 -msse3 -pthread -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=c++17 -g -O0 -ltbb -lboost_system -msse2 -msse3 -pthread -w")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=c++17 -g -O3 -ltbb -lboost_system -msse2 -msse3 -pthread -w") # -Wall
 
 message("Current CPU archtecture: ${CMAKE_SYSTEM_PROCESSOR}")

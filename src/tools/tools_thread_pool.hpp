@@ -209,6 +209,7 @@ protected:
                     {
                         std::function<void()> task;
                         {
+                            // std::unique_lock<std::mutex> lock(this->queue_mutex); 这个锁是在保护tasks任务队列 不是保护task
                             std::unique_lock<std::mutex> lock(this->queue_mutex);
                             this->condition.wait(lock,
                                                  [this]

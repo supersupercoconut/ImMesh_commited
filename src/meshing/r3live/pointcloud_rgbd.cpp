@@ -711,7 +711,7 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
             }
         }
 
-        /// @bug 这里的box_ptr也会出现 {use count 1811941585 weak count 32762} 这种情况
+        /// @bug 这里的 box_ptr也会出现 {use count 1811941585 weak count 32762} 这种情况
         RGB_voxel_ptr box_ptr;
         temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
         if ( temp_box_ptr_ptr == nullptr )

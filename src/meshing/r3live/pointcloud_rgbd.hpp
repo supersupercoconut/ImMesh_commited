@@ -123,9 +123,10 @@ class RGB_pts
 
     void clear()
     {
-        m_rgb[ 0 ] = 0;
-        m_rgb[ 1 ] = 0;
-        m_rgb[ 2 ] = 0;
+        // 新建点的默认颜色为黑色 | m_N_rgb 在rendering线程中被更改
+        m_rgb[ 0 ] = 1.0;
+        m_rgb[ 1 ] = 1.0;
+        m_rgb[ 2 ] = 1.0;
         m_N_rgb = 0;
         m_obs_dis = 0;
         m_last_obs_time = 0;
@@ -251,6 +252,7 @@ std::vector<RGB_pt_ptr> retrieve_pts_in_voxels(std::unordered_set< std::shared_p
 using Voxel_set_iterator = std::unordered_set< std::shared_ptr< RGB_Voxel > >::iterator;
 using KDtree_pt = ikdTree_PointType;
 using KDtree_pt_vector =  KD_TREE<KDtree_pt>::PointVector;
+
 
 struct Global_map
 {
