@@ -42,6 +42,8 @@ different license.
 #include "meshing/mesh_rec_display.hpp"
 #include "meshing/mesh_rec_geometry.hpp"
 #include "tools/tools_thread_pool.hpp"
+#include <shared_mutex>
+#include "meshing/r3live/pointcloud_rgbd.hpp"
 
 extern Global_map       g_map_rgb_pts_mesh;
 extern Triangle_manager g_triangles_manager;
@@ -67,6 +69,9 @@ static double g_LiDAR_frame_avg_time;
 
 
 /////////////////////// 新增部分
+
+extern std::shared_mutex g_mutex_eigen_vec_vec;     // 为保护g_eigen_vec_vec的读写操作
+
 std::mutex g_mutex_colored_points;
 std::mutex g_mutex_projection_points;
 std::shared_ptr<std::shared_future<void> > g_render_thread = nullptr;
@@ -104,6 +109,10 @@ extern int                                  g_save_to_offline_bin;
 
 LiDAR_frame_pts_and_pose_vec       g_ponintcloud_pose_vec;
 
+namespace{
+    const double image_obs_cov = 1.5;
+    const double process_noise_sigma = 0.15;
+}
 
 // 函数重载 - 使用所有数据的mesh重建函数 - 包含点云渲染以及mesh重建
 void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr frame_pts, cv::Mat img, Eigen::Quaterniond pose_q, Eigen::Vector3d pose_t, int frame_idx )
@@ -119,16 +128,20 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     pose_vec.head< 4 >() = pose_q.coeffs().transpose();
     pose_vec.block( 4, 0, 3, 1 ) = pose_t;
 
+    std::unique_lock lock(g_mutex_eigen_vec_vec);
     for ( int i = 0; i < frame_pts->points.size(); i++ )
     {
         g_eigen_vec_vec[ frame_idx ].first.emplace_back( frame_pts->points[ i ].x, frame_pts->points[ i ].y, frame_pts->points[ i ].z,
                                                          frame_pts->points[ i ].intensity );
     }
     g_eigen_vec_vec[ frame_idx ].second = pose_vec;
-    
+    lock.unlock();
+
+
     int append_point_step = std::max( ( int ) 1, ( int ) std::round( frame_pts->points.size() / appending_pts_frame ) );
     Common_tools::Timer tim, tim_total;
     // g_map_rgb_pts_mesh 对应的为全局地图 | 上锁可能是由于 incremental_mesh_reconstruction 这个函数是在线程池中进行commit_task执行的 | 数据送入全局地图之后并没有进行降采样
+        // g_mutex_append_map 这个互斥锁是保护g_map_rgb_pts_mesh类本身的操作 —— 防止其他线程来执行这部分的操作
     g_mutex_append_map.lock();
     /// @bug 有时候也会出现这里有问题的debug信息
     if( !(g_map_rgb_pts_mesh.append_points_to_global_map( *frame_pts, frame_idx, nullptr, append_point_step )))
@@ -136,7 +149,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         g_mutex_append_map.unlock();
         return;
     }
-//    std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited = g_map_rgb_pts_mesh.m_voxels_recent_visited;
     g_mutex_append_map.unlock();
     LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the append_points_to_global_map ";
 
@@ -154,7 +166,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     Eigen::Vector3d t_w2c;
     t_w2c = rot_i2w * extR * camera_ext_t + extR * extT + pos_i2w;
 
-
     std::shared_ptr<Image_frame> image_pose = std::make_shared<Image_frame>(cam_k);
     image_pose->set_pose(eigen_q(R_w2c), t_w2c);
     image_pose->m_img = img;
@@ -162,7 +173,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     image_pose->m_timestamp = ros::Time::now().toSec();
     image_pose->init_cubic_interpolation();
     image_pose->image_equalize();
-
 
     /// @attention 突然感觉这个函数的作用不大 - 基本上是不需要被使用的(这个生成的数据后面也没有被使用)
 //    std::vector<cv::Point2f> pts_2d_vec;
@@ -177,28 +187,78 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 //            render_pts_in_voxels_mp, image_pose, &g_map_rgb_pts_mesh.m_voxels_recent_visited, image_pose->m_timestamp ) );
 
     //    auto idx = frame_idx;
-
-
     /// @bug render_pts_in_voxels_mp的voxel_ptr有问题(越界导致段错误) - 所以我怀疑是输入的voxel_ptr集合(即voxels_recent_visited)出现问题 (貌似不是这个部分的问题...没找到)
     // 因为这里会操作全局地图 中的部分voxel的m_ptr_in_grid这个函数, 所以上锁
 
-    g_mutex_append_map.lock();
+
 //    render_pts_in_voxels_mp(image_pose, &g_map_rgb_pts_mesh.m_voxels_recent_visited , image_pose->m_timestamp );
-    render_pts_in_voxels_mp(image_pose, &voxels_recent_visited , image_pose->m_timestamp );
-    g_map_rgb_pts_mesh.m_last_updated_frame_idx++;
+//    render_pts_in_voxels_mp(image_pose, &voxels_recent_visited , image_pose->m_timestamp );
+
+
+    long numbers_of_voxels = voxels_recent_visited.size();
+    std::vector<shared_ptr<RGB_Voxel>> voxels_for_render;
+    for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); it++ )
+    {
+        voxels_for_render.push_back( *it );
+    }
+
+    image_pose->m_acc_render_count = 0;
+    image_pose->m_acc_photometric_error = 0;
+
+//    cv::parallel_for_( cv::Range( 0, numbers_of_voxels ),
+//                       [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, image_pose, &voxels_for_render, image_pose->m_timestamp ); } );
+//    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
+
+
+    // 模仿immesh里面mesh重建的部分 —— 直接在这里写成tbb的加速 | 因为这个部分只会调用全局地图中的点云数据,所以上的是与之前相同的锁
+    std::atomic<long> my_render_pts_count;
+    g_mutex_append_map.lock();
+    try
+    {
+        cv::parallel_for_(cv::Range(0, numbers_of_voxels), [&](const cv::Range &r) {
+            vec_3 pt_w;
+            vec_3 rgb_color;
+            double u, v;
+            double pt_cam_norm;
+            for (int voxel_idx = r.start; voxel_idx < r.end; voxel_idx++) {
+                RGB_voxel_ptr voxel_ptr = voxels_for_render[voxel_idx];
+                for (int pt_idx = 0; pt_idx < voxel_ptr->m_pts_in_grid.size(); pt_idx++) {
+                    pt_w = voxel_ptr->m_pts_in_grid[pt_idx]->get_pos();
+                    if (image_pose->project_3d_point_in_this_img(pt_w, u, v, nullptr, 1.0) == false)
+                        continue;
+
+                    pt_cam_norm = (pt_w - image_pose->m_pose_w2c_t).norm();
+                    // 在图像上获取点云的颜色信息 | 然后对这个voxel中的所有点云的颜色信息进行更新
+                    rgb_color = image_pose->get_rgb(u, v, 0);
+                    if (voxel_ptr->m_pts_in_grid[pt_idx]->update_rgb(
+                            rgb_color, pt_cam_norm, vec_3(image_obs_cov, image_obs_cov, image_obs_cov),
+                            image_pose->m_timestamp)) {
+                        my_render_pts_count++;
+                    }
+                }
+            }
+        });
+        LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
+    }
+    catch ( ... )
+    {
+        for ( int i = 0; i < 100; i++ )
+        {
+            cout << ANSI_COLOR_RED_BOLD << "Exception in tbb parallels...in rendering" << ANSI_COLOR_RESET << endl;
+        }
+        return;
+    }
     g_mutex_append_map.unlock();
 
 
-    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
-
-
     /*** 发布线程 ***/
-    if( g_pub_thr == nullptr  && flag == 0 )
-    {
-        // 对于10000个RGB点构建一个彩色点云的发布器，然后创建出多个发布器之后再发布数据(不过不理解的部分在与这里明明是进行数据的读取，为什么这里不需要上锁-也访问全局地图了)
-        g_pub_thr = std::make_unique<std::thread>(&Global_map::service_pub_rgb_maps, &g_map_rgb_pts_mesh);
-        flag = 1;           // 因为创建线程写在了while()循环中, 为了避免线程的重复创建，这里设置flag
-    }
+//    g_map_rgb_pts_mesh.m_last_updated_frame_idx++;
+//    if( g_pub_thr == nullptr  && flag == 0 )
+//    {
+//        // 对于10000个RGB点构建一个彩色点云的发布器，然后创建出多个发布器之后再发布数据(不过不理解的部分在与这里明明是进行数据的读取，为什么这里不需要上锁-也访问全局地图了)
+//        g_pub_thr = std::make_unique<std::thread>(&Global_map::service_pub_rgb_maps, &g_map_rgb_pts_mesh);
+//        flag = 1;           // 因为创建线程写在了while()循环中, 为了避免线程的重复创建，这里设置flag
+//    }
 
     /*** 完成render之后的mesh重建过程 ***/
     std::atomic< int >    voxel_idx( 0 );
@@ -208,7 +268,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     typedef std::unordered_set< std::shared_ptr< RGB_Voxel > >::iterator set_voxel_it;
     std::unordered_map< std::shared_ptr< RGB_Voxel >, Triangle_set >     removed_triangle_list;
     std::unordered_map< std::shared_ptr< RGB_Voxel >, Triangle_set >     added_triangle_list;
-    std::unordered_map< std::shared_ptr< RGB_Voxel >, Triangle_set >     existing_triangle_list;
 
     g_mutex_reconstruct_mesh.lock();
     tim.tic();
@@ -308,11 +367,13 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             for ( auto triangle_ptr : triangles_to_add )
             {
                 // 使用g_eigen_vec_vec的位姿信息 - 即对应了在GUI做展示的时候 实际运行出来的实际 camera 的位姿信息 | 短轴部分对应的应该是2D投影平面上的法向量
+                std::shared_lock lock(g_mutex_eigen_vec_vec);
                 correct_triangle_index( triangle_ptr, g_eigen_vec_vec[ frame_idx ].second.block( 4, 0, 3, 1 ), voxel->m_short_axis );
             }
 
             for ( auto triangle_ptr : existing_triangle )
             {
+                std::shared_lock lock(g_mutex_eigen_vec_vec);
                 correct_triangle_index( triangle_ptr, g_eigen_vec_vec[ frame_idx ].second.block( 4, 0, 3, 1 ), voxel->m_short_axis );
             }
             std::unique_lock< std::mutex > lock( mtx_triangle_lock );   // 对removed_triangle_list以及added_triangle_list进行上锁 保证tbb执行的时候不会出现同时读写问题
@@ -331,13 +392,12 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     {
         for ( int i = 0; i < 100; i++ )
         {
-            cout << ANSI_COLOR_RED_BOLD << "Exception in tbb parallels..." << ANSI_COLOR_RESET << endl;
+            cout << ANSI_COLOR_RED_BOLD << "Exception in tbb parallels...in mesh reconstruction" << ANSI_COLOR_RESET << endl;
         }
         return;
     }
 
     /*** tbb mesh重建部分已经完成 - 剩余部分就是对整体进行处理 ***/
-
     double              mul_thr_cost_time = tim.toc( " ", 0 );
     Common_tools::Timer tim_triangle_cost;
     int                 total_delete_triangle = 0, total_add_triangle = 0;
@@ -444,9 +504,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
                                                          frame_pts->points[ i ].intensity );
     }
     g_eigen_vec_vec[ frame_idx ].second = pose_vec;
-    // g_eigen_vec_vec.push_back( std::make_pair( empty_vec, pose_vec ) );
-    // TODO : add time tic toc
-
 
     // appending_pts_frame : 一帧frame中有多少点可以被加入到global map中 | append_point_step 使用自适应的步长(限制每一帧点云中应该有多少点可以被加入到地图中)
     int                 append_point_step = std::max( ( int ) 1, ( int ) std::round( frame_pts->points.size() / appending_pts_frame ) );
@@ -459,6 +516,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     // 知道哪些voxel需要被处理(这个数据会跟临时定义的voxels_recent_visited变量进行数据互换，所以没有显示地让整个数据清空的操作)
     std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited = g_map_rgb_pts_mesh.m_voxels_recent_visited;
     g_mutex_append_map.unlock();
+    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish append_points_to_global_map";
 
     /// @attention 原子类型 - 相当与是mutex锁的平替(因为锁在开关的时候比较耗费时间，一般都是针对一段代码进行Mutex操作，而atomic是对单一变量的操作 - 多个线程都能访问这个数据)
     std::atomic< int >    voxel_idx( 0 );
@@ -528,7 +586,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             }
            
             std::set< long > convex_hull_index, inner_pts_index;
-            // mtx_triangle_lock.lock();
 
             voxel->m_short_axis.setZero();
             std::vector< long > add_triangle_idx = delaunay_triangulation( pts_in_voxels, voxel->m_long_axis, voxel->m_mid_axis,
@@ -584,6 +641,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         return;
     }
 
+    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish mesh reconstruction";
     double              mul_thr_cost_time = tim.toc( " ", 0 );
     Common_tools::Timer tim_triangle_cost;
     int                 total_delete_triangle = 0, total_add_triangle = 0;
@@ -594,7 +652,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         total_delete_triangle += triangles_set.second.size();
         g_triangles_manager.remove_triangle_list( triangles_set.second );
     }
-    LOG(INFO) << "[incremental_mesh_reconstruction]: The count of deleted triangle is "<< total_delete_triangle;
+//    LOG(INFO) << "[incremental_mesh_reconstruction]: The count of deleted triangle is "<< total_delete_triangle;
 
     // 这里面的每个元素对应着一个voxel中的triangle集合
     for ( auto &triangle_list : added_triangle_list )
@@ -610,10 +668,9 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             tri_ptr->m_index_flip = triangle_ptr->m_index_flip;
         }
     }
-    LOG(INFO) << "[incremental_mesh_reconstruction]: The count of added triangle is "<< total_add_triangle;
-    
     g_mutex_reconstruct_mesh.unlock();
-   
+
+    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish triangle insert";
     if ( g_fp_cost_time )
     {
         if ( frame_idx > 0 )
@@ -646,6 +703,7 @@ void service_reconstruct_mesh()
     if ( g_thread_pool_rec_mesh == nullptr )
     {
         // 不需要手动删除(线程池自己会进行销毁工作) —— 在线程池类的析构函数中进行数据的销毁
+        LOG(INFO) << "The total thread of Thread pool is: " << g_maximum_thread_for_rec_mesh;
         g_thread_pool_rec_mesh = std::make_shared< Common_tools::ThreadPool >( g_maximum_thread_for_rec_mesh );
     }
     int drop_frame_num = 0;
@@ -693,10 +751,10 @@ void service_reconstruct_mesh()
             // ANCHOR - Comment follow line to disable meshing
             if ( g_enable_mesh_rec )
             {
-                // 多线程的部分开始运行 | 给定的参数分别为 : 任务函数 + 一些参数
-                /// @attention 这里说的是某一个空闲线程来接受这个任务而不是所有的线程都在执行这个函数
+                // 线程池开始运行 | 给定的参数分别为 : 任务函数 + 一些参数
 //                g_thread_pool_rec_mesh->commit_task( incremental_mesh_reconstruction, data_pack_front.m_frame_pts, data_pack_front.m_pose_q,
 //                                                     data_pack_front.m_pose_t, data_pack_front.m_frame_idx );
+
 
 //                g_thread_pool_rec_mesh->commit_task([&]() {
 //                    incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
@@ -715,7 +773,7 @@ void service_reconstruct_mesh()
                                                     data_pack_front.m_frame_idx);
                 });
 
-                // 这里感觉是在线程池里面重复执行这个函数的时候导致的错误
+//                // 这里感觉是在线程池里面重复执行这个函数的时候导致的错误
 //                incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
 //                                                data_pack_front.m_img,
 //                                                data_pack_front.m_pose_q,
@@ -723,8 +781,8 @@ void service_reconstruct_mesh()
 //                                                data_pack_front.m_frame_idx);
 
             }
-
-        std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
+        //
+        std::this_thread::sleep_for( std::chrono::microseconds( 50 ) );
     }
 }
 

@@ -2,7 +2,7 @@
 #define STBI_MSC_SECURE_CRT
 #include "mesh_rec_display.hpp"
 #include "tools/openGL_libs/gl_draw_founction.hpp"
-
+#include <shared_mutex>
 #include "tools_timer.hpp"
 #include "tinycolormap.hpp"
 #include "tools/openGL_libs/openGL_camera.hpp"
@@ -10,6 +10,7 @@
 extern Global_map                   g_map_rgb_pts_mesh;
 extern Triangle_manager             g_triangles_manager;
 extern LiDAR_frame_pts_and_pose_vec g_eigen_vec_vec;
+extern std::shared_mutex g_mutex_eigen_vec_vec;
 
 extern Eigen::Matrix3d g_camera_K;
 // extern Eigen::Matrix3d lidar_frame_to_camera_frame;
@@ -105,7 +106,7 @@ struct Region_triangles_shader
             m_triangle_pt_vec[ count + 2 ] = pt_c.cast< float >();
 
             // 补充颜色信息
-            /// TODO 这里获取直接获取颜色信息的话，会显得的之前在mesh重建里面打包的数据有些多余
+            /// TODO 这里获取直接获取颜色信息的话，会显得的之前在mesh重建里面打包的数据有些多余 —— 之前在mesh数据输入的时候修改了一部分变量(现在看没什么用)
             if(m_if_set_color)
             {
                 for(auto i = 0; i < 3; ++i)
@@ -208,7 +209,11 @@ void display_current_LiDAR_pts( int current_frame_idx, double pts_size, vec_4f c
     }
     // 通过修改
     g_LiDAR_point_shader.set_point_attr( pts_size );
-    g_LiDAR_point_shader.set_pointcloud( g_eigen_vec_vec[ current_frame_idx ].first, vec_3( 1.0, 1.0, 1.0 ) );
+    {
+        std::shared_lock lock(g_mutex_eigen_vec_vec);
+        g_LiDAR_point_shader.set_pointcloud( g_eigen_vec_vec[ current_frame_idx ].first, vec_3( 1.0, 1.0, 1.0 ) );
+    }
+
     g_LiDAR_point_shader.draw( g_gl_camera.m_gl_cam.m_glm_projection_mat,
                                Common_tools::eigen2glm( g_gl_camera.m_gl_cam.m_camera_pose_mat44_inverse ) );
 }
@@ -334,7 +339,7 @@ void display_camera_traj( float display_size )
 
 void draw_camera_pose( int current_frame_idx, float pt_disp_size, float display_cam_size )
 {
-
+    std::shared_lock lock(g_mutex_eigen_vec_vec);
     Eigen::Quaterniond pose_q( g_eigen_vec_vec[ current_frame_idx ].second.head< 4 >() );
     vec_3              pose_t = g_eigen_vec_vec[ current_frame_idx ].second.block( 4, 0, 3, 1 );
     mat_3_3            lidar_frame_to_camera_frame;
@@ -355,6 +360,8 @@ void draw_camera_pose( int current_frame_idx, float pt_disp_size, float display_
 void draw_camera_trajectory( int current_frame_idx, float pt_disp_size )
 {
     pt_camera_traj.clear();
+
+    std::shared_lock lock(g_mutex_eigen_vec_vec);
     for ( int i = 0; i < current_frame_idx; i++ )
     {
         if ( g_eigen_vec_vec[ i ].second.size() >= 7 )

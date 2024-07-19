@@ -1003,7 +1003,7 @@ static inline double thread_render_pts_in_voxel( const int& pt_start, const int&
 //    return cost_time;
 }
 
-// 专门为 g_voxel_for_render 数据设置一个互斥锁来控制
+// 专门为 g_voxel_for_render 数据设置一个互斥锁来控制 | g_voxel_for_render 感觉会被多个线程同时读取，所以这里这么写并不会好
 std::vector< RGB_voxel_ptr > g_voxel_for_render;
 FILE*                        photometric_fp = nullptr;
 int reasonable_threshold = 1000;

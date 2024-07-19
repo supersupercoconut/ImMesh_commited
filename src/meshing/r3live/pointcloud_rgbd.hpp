@@ -349,27 +349,6 @@ void render_pts_in_voxels_mp( const std::shared_ptr< Image_frame > &img_ptr, std
                               const double &obs_time = 0 );
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 template < typename Archive >
 inline void save( Archive &ar, const Global_map &global_map, const unsigned int /*version*/ )
 {
@@ -449,3 +428,7 @@ inline void load( Archive &ar, Global_map &global_map, const unsigned int /*vers
     cout << endl;
     cout << "Load offine global map cost: " << tim.toc() << " ms" << ANSI_COLOR_RESET << endl;
 }
+
+
+static inline double thread_render_pts_in_voxel( const int& pt_start, const int& pt_end, const std::shared_ptr< Image_frame >& img_ptr,
+                                                 const std::vector< RGB_voxel_ptr >* voxels_for_render, const double obs_time );

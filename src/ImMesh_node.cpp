@@ -42,6 +42,7 @@
 
 #include <glog/logging.h>
 #include <ImMesh/cloud_voxel.h>
+#include <shared_mutex>
 
 double g_maximum_pe_error = 40;
 double g_initial_camera_exp_tim = 1.0;
@@ -79,6 +80,7 @@ std::vector< GLuint >      g_texture_id_vec;
 long                       img_width = 0, img_heigh = 0;
 
 LiDAR_frame_pts_and_pose_vec g_eigen_vec_vec;
+std::shared_mutex            g_mutex_eigen_vec_vec;
 //// 补充数据 /////
 LiDAR_color_frame_pts_and_pose_vec g_eigen_color_vec_vec;
 /////////////////
@@ -163,6 +165,7 @@ void get_last_avr_pose( int current_frame_idx, Eigen::Quaterniond &q_avr, vec_3 
     Eigen::Quaterniond q_first;
     for ( int frame_idx = frame_s; frame_idx < current_frame_idx; frame_idx++ )
     {
+        std::shared_lock lock(g_mutex_eigen_vec_vec);
         if ( g_eigen_vec_vec[ frame_idx ].second.size() != 0 )
         {
             Eigen::Quaterniond pose_q( g_eigen_vec_vec[ frame_idx ].second.head< 4 >() );
