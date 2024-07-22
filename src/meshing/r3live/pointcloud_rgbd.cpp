@@ -60,6 +60,8 @@ extern Voxel_mapping voxel_mapping;
 std::mutex g_mutex_append_points_process;
 std::mutex g_mutex_render_mp_process;
 std::mutex g_mutex_render_voxel_mp_process;
+extern std::mutex g_mutex_pts_vector;
+extern std::mutex g_mutex_append_map;
 
 cv::RNG                                            g_rng = cv::RNG( 0 );
 // std::atomic<long> g_pts_index(0);
@@ -657,33 +659,33 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
     {
         voxels_recent_visited.clear();
     }
-    else
-    {
-        m_mutex_m_box_recent_hitted->lock();
-        std::swap( voxels_recent_visited, m_voxels_recent_visited );
-        m_mutex_m_box_recent_hitted->unlock();
-        for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
-        {
-
-            if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
-            {
-                it = voxels_recent_visited.erase( it );
-                continue;
-            }
-            if ( ( *it )->m_pts_in_grid.size() )
-            {
-                double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
-                // if ( voxel_dis > 30 )
-                // {
-                //     it = voxels_recent_visited.erase( it );
-                //     continue;
-                // }
-            }
-
-            it++;
-        }
-        // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
-    }
+//    else
+//    {
+//        m_mutex_m_box_recent_hitted->lock();
+//        std::swap( voxels_recent_visited, m_voxels_recent_visited );
+//        m_mutex_m_box_recent_hitted->unlock();
+//        for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
+//        {
+//
+//            if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
+//            {
+//                it = voxels_recent_visited.erase( it );
+//                continue;
+//            }
+//            if ( ( *it )->m_pts_in_grid.size() )
+//            {
+//                double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
+//                // if ( voxel_dis > 30 )
+//                // {
+//                //     it = voxels_recent_visited.erase( it );
+//                //     continue;
+//                // }
+//            }
+//
+//            it++;
+//        }
+//        // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
+//    }
     int number_of_voxels_before_add = voxels_recent_visited.size();
     int pt_size = pc_in.points.size();
     // step = 4;
@@ -691,6 +693,7 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
     KDtree_pt_vector     pt_vec_vec;
     std::vector< float > dist_vec;
 
+//    g_mutex_append_map.lock();
     RGB_voxel_ptr* temp_box_ptr_ptr;
     for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
     {
@@ -760,10 +763,14 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
         if(box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0)
             return 0;
 
+//        g_mutex_pts_vector.lock();
         pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
         pt_rgb->m_pt_index = m_rgb_pts_vec.size();
         kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
         m_rgb_pts_vec.push_back( pt_rgb );
+//        g_mutex_pts_vector.unlock();
+
+
         m_hashmap_3d_pts.insert( grid_x, grid_y, grid_z, pt_rgb );
         if ( box_ptr != nullptr )
         {
@@ -787,6 +794,8 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
             pts_added_vec->push_back( pt_rgb );
         }
     }
+//    g_mutex_append_map.unlock();
+
     m_in_appending_pts = 0;
     m_mutex_m_box_recent_hitted->lock();
     std::swap( m_voxels_recent_visited, voxels_recent_visited );
@@ -1387,6 +1396,8 @@ vec_3 Global_map::smooth_pts( RGB_pt_ptr& rgb_pt, double smooth_factor, double k
     m_kdtree.Nearest_Search( KDtree_pt(pt_vec), knn,  kdtree_pt_vec, search_pt_dis  );
     double valid_size = 0.0;
      int size = search_pt_dis.size();
+
+//    g_mutex_pts_vector.lock();
     for ( int k = 1; k < size; k++ )
     {
         if( sqrt(search_pt_dis[k]) < maximum_smooth_dis )
@@ -1395,6 +1406,7 @@ vec_3 Global_map::smooth_pts( RGB_pt_ptr& rgb_pt, double smooth_factor, double k
             valid_size += 1.0;
         }
     }
+//    g_mutex_pts_vector.unlock();
     vec_3 pt_vec_smoothed = pt_vec * ( 1.0 - smooth_factor ) + pt_vec_neighbor * smooth_factor / valid_size;
     rgb_pt->set_smooth_pos(pt_vec_smoothed);
     return pt_vec_smoothed;

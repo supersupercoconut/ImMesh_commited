@@ -1,12 +1,17 @@
 #include "triangle.hpp"
 #include <glog/logging.h>
+extern std::mutex g_mutex_pts_vector;
+
 vec_3 Triangle_manager::get_triangle_center(const Triangle_ptr& tri_ptr)
 {
+//    g_mutex_pts_vector.lock();
     vec_3 triangle_pos = ( m_pointcloud_map->m_rgb_pts_vec[ tri_ptr->m_tri_pts_id[ 0 ] ]->get_pos() +
                            m_pointcloud_map->m_rgb_pts_vec[ tri_ptr->m_tri_pts_id[ 1 ] ]->get_pos() +
                            m_pointcloud_map->m_rgb_pts_vec[ tri_ptr->m_tri_pts_id[ 2 ] ]->get_pos() );
     triangle_pos = triangle_pos / 3.0;
+//    g_mutex_pts_vector.unlock();
     return triangle_pos;
+
 }
 
 int Triangle_manager::get_all_triangle_list(std::vector< Triangle_set > & triangle_list, std::mutex * mutex, int sleep_us_each_query)

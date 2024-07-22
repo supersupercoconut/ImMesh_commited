@@ -961,7 +961,7 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     nh.param< double >( "meshing/region_size", m_meshing_region_size, 10.0 );
     nh.param< int >( "meshing/if_draw_mesh", m_if_draw_mesh, 1.0 );
     nh.param< int >( "meshing/enable_mesh_rec", m_if_enable_mesh_rec, 1 );
-    nh.param< int >( "meshing/maximum_thread_for_rec_mesh", m_meshing_maximum_thread_for_rec_mesh, 20 );
+    nh.param< int >( "meshing/maximum_thread_for_rec_mesh", m_meshing_maximum_thread_for_rec_mesh, 4 );
     nh.param< int >( "meshing/number_of_pts_append_to_map", m_meshing_number_of_pts_append_to_map, 10000 );
 
 
@@ -1028,12 +1028,6 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     m_camera_ext_R = Eigen::Map< Eigen::Matrix< double, 3, 3, Eigen::RowMajor > >( camera_ext_R_data.data() );
     m_camera_ext_t = Eigen::Map< Eigen::Matrix< double, 3, 1 > >( camera_ext_t_data.data() );
 
-//    /*** lidar转换到imu ***/
-//    m_extrin_R = {1,0,0,
-//                  0,1,0,
-//                  0,0,1};
-//    m_extrin_T = {0,0,0};
-
     cv::eigen2cv(m_camera_intrinsic, intrinsic);
     cv::eigen2cv(m_camera_dist_coeffs, dist_coeffs);
     /*设置去畸变参数等等*/
@@ -1052,7 +1046,14 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     LOG(INFO) << "Subscribing to topic: " << m_lid_topic.c_str();
     LOG(INFO) << "Subscribing to topic: " << m_imu_topic.c_str();
     LOG(INFO) << "Subscribing to topic: " << m_img_topic.c_str();
-    LOG(INFO) << "m_p_pre->lidar_type" << m_p_pre->lidar_type;
+    // 获取rosbag中的数据
+    m_topics.push_back(m_lid_topic);
+    m_topics.push_back(m_imu_topic);
+    m_topics.push_back(m_img_topic);
+    m_bag_file = "/home/supercoconut/Myfile/datasets/R3LIVE/hku_campus_seq_00.bag";
+
+    LOG(INFO) << "m_bag_file: " << m_bag_file;
+    LOG(INFO) << "m_p_pre->lidar_type: " << m_p_pre->lidar_type;
 
     cout << "[Ros_parameter]: Camera Intrinsic: " << endl;
     cout << m_camera_intrinsic << endl;
@@ -1242,3 +1243,211 @@ void Voxel_mapping::image_equalize(cv::Mat &img, int amp)
     img = img_temp;
 }
 
+// 从rosbag中读取 lidar img以及imu 并且将数据送入的到buffer中
+void Voxel_mapping::read_ros_bag()
+{
+//    LOG(INFO) << "reading data from dataset";
+    if(!m_bag.isOpen())
+        LOG(ERROR) << "Error: Bag file is not open";
+
+    sensor_msgs::CompressedImageConstPtr image;
+    livox_ros_driver::CustomMsg::ConstPtr lidar;
+    sensor_msgs::Imu::ConstPtr imu;
+
+    bool image_received = false;
+    bool lidar_received = false;
+
+    /// @bug 这里感觉遍历rosbag的时候结束的是在太快了, 没有同时出现image与lidar同时接受到数据的情况就结束了
+    for(; m_iterator != m_view->end() ; ++m_iterator )
+    {
+//        LOG(INFO) << "m_iterator->getTopic(): " << m_iterator->getTopic();
+        if( image_received && lidar_received)
+        {
+//            LOG(INFO) << "Finish this dataset extraction";
+            break;
+        }
+
+        else if(m_iterator->getTopic() == m_imu_topic)
+        {
+            if ( m_last_timestamp_lidar < 0.0 )
+            {
+                continue;
+            }
+            imu = m_iterator->instantiate<sensor_msgs::Imu>();
+            if(imu == nullptr)
+            {
+                LOG(ERROR) << "imu is nullptr";
+                continue;
+            }
+
+            double timestamp = imu->header.stamp.toSec();
+//            if ( m_last_timestamp_imu > 0.0 && timestamp < m_last_timestamp_imu )
+//            {
+//                ROS_ERROR( "imu loop back \n" );
+//                return;
+//            }
+//            if ( m_last_timestamp_imu > 0.0 && timestamp > m_last_timestamp_imu + 0.4 )
+//            {
+//                ROS_WARN( "imu time stamp Jumps %0.4lf seconds \n", timestamp - m_last_timestamp_imu );
+//                return;
+//            }
+            m_last_timestamp_imu = timestamp;
+            m_imu_buffer.push_back( imu );
+            continue;
+        }
+
+            // 对lidar数据需要进行转换 | 从livox数据类型转换成正常类型
+        else if (!lidar_received && m_iterator->getTopic() == m_lid_topic)
+        {
+            lidar = m_iterator->instantiate<livox_ros_driver::CustomMsg>();
+            if(lidar == nullptr)
+            {
+                LOG(ERROR) << "lidar is nullptr";
+                continue;
+            }
+
+            if(lidar->header.stamp.toSec() < m_last_timestamp_lidar)
+            {
+                ROS_ERROR("lidar loop back, clear buffer");
+                m_lidar_buffer.clear();
+            }
+            else
+            {
+                PointCloudXYZI::Ptr ptr( new PointCloudXYZI() );
+                m_p_pre->process( lidar, ptr );
+                m_lidar_buffer.push_back( ptr );
+                m_time_buffer.push_back( lidar->header.stamp.toSec() );
+                m_last_timestamp_lidar = lidar->header.stamp.toSec();
+                lidar_received = true;
+                continue;
+            }
+        }
+
+        else if(!image_received && m_iterator->getTopic() == m_img_topic)
+        {
+            image = m_iterator->instantiate<sensor_msgs::CompressedImage>();
+            if(image == nullptr)
+            {
+                LOG(ERROR) << "image is nullptr";
+                continue;
+            }
+
+            m_last_timestamp_img = image->header.stamp.toSec();
+
+            cv_bridge::CvImagePtr cv_ptr_compressed = cv_bridge::toCvCopy( image, sensor_msgs::image_encodings::BGR8 );
+            double img_rec_time = image->header.stamp.toSec();
+            m_img = cv_ptr_compressed->image;
+//4lio
+            cv_ptr_compressed->image.release();
+
+            cv::remap( m_img, m_img, m_ud_map1, m_ud_map2, cv::INTER_LINEAR );
+            cv::cvtColor(m_img, m_img_gray, cv::COLOR_RGB2GRAY);
+            image_equalize(m_img_gray, 3.0);
+            m_img = equalize_color_image_Ycrcb(m_img);
+            m_img_buffer.push_back(m_img);
+            m_img_time_buffer.push_back(image->header.stamp.toSec());
+            image_received = true;
+            continue;
+        }
+    }
+
+//    while(m_iterator != m_view->end())
+//    {
+//        LOG(INFO) << "m_iterator->getTopic(): " << m_iterator->getTopic();
+//        if( image_received && lidar_received)
+//        {
+//            LOG(INFO) << "Finish this dataset extraction";
+//            break;
+//        }
+//
+//        else if(m_iterator->getTopic() == m_imu_topic)
+//        {
+//            ++m_iterator;
+//            if ( m_last_timestamp_lidar < 0.0 )
+//            {
+//                continue;
+//            }
+//            m_publish_count++;
+//            imu = m_iterator->instantiate<sensor_msgs::Imu>();
+//            if(imu == nullptr)
+//            {
+//                LOG(ERROR) << "imu is nullptr";
+//                continue;
+//            }
+//
+//            double timestamp = imu->header.stamp.toSec();
+////            if ( m_last_timestamp_imu > 0.0 && timestamp < m_last_timestamp_imu )
+////            {
+////                ROS_ERROR( "imu loop back \n" );
+////                return;
+////            }
+////            if ( m_last_timestamp_imu > 0.0 && timestamp > m_last_timestamp_imu + 0.4 )
+////            {
+////                ROS_WARN( "imu time stamp Jumps %0.4lf seconds \n", timestamp - m_last_timestamp_imu );
+////                return;
+////            }
+//            m_last_timestamp_imu = timestamp;
+//            m_imu_buffer.push_back( imu );
+//            continue;
+//        }
+//
+//        // 对lidar数据需要进行转换 | 从livox数据类型转换成正常类型
+//        else if (!lidar_received && m_iterator->getTopic() == m_lid_topic)
+//        {
+//            ++m_iterator;
+//            lidar = m_iterator->instantiate<livox_ros_driver::CustomMsg>();
+//            if(lidar == nullptr)
+//            {
+//                LOG(ERROR) << "lidar is nullptr";
+//                continue;
+//            }
+//
+//            if(lidar->header.stamp.toSec() < m_last_timestamp_lidar)
+//            {
+//                ROS_ERROR("lidar loop back, clear buffer");
+//                m_lidar_buffer.clear();
+//            }
+//            else
+//            {
+//                PointCloudXYZI::Ptr ptr( new PointCloudXYZI() );
+//                m_p_pre->process( lidar, ptr );
+//                m_lidar_buffer.push_back( ptr );
+//                m_time_buffer.push_back( lidar->header.stamp.toSec() );
+//                m_last_timestamp_lidar = lidar->header.stamp.toSec();
+//                lidar_received = true;
+//                continue;
+//            }
+//        }
+//
+//        else if(!image_received && m_iterator->getTopic() == m_img_topic)
+//        {
+//            ++m_iterator;
+//            image = m_iterator->instantiate<sensor_msgs::CompressedImage>();
+//            if(image == nullptr)
+//            {
+//                LOG(ERROR) << "image is nullptr";
+//                continue;
+//            }
+//
+//            m_last_timestamp_img = image->header.stamp.toSec();
+//
+//            cv_bridge::CvImagePtr cv_ptr_compressed = cv_bridge::toCvCopy( image, sensor_msgs::image_encodings::BGR8 );
+//            double img_rec_time = image->header.stamp.toSec();
+//            m_img = cv_ptr_compressed->image;
+//            LOG(INFO) << "m_img " << m_img.size();
+//            cv_ptr_compressed->image.release();
+//
+//            cv::remap( m_img, m_img, m_ud_map1, m_ud_map2, cv::INTER_LINEAR );
+//            cv::cvtColor(m_img, m_img_gray, cv::COLOR_RGB2GRAY);
+//            image_equalize(m_img_gray, 3.0);
+//            m_img = equalize_color_image_Ycrcb(m_img);
+//            m_img_buffer.push_back(m_img);
+//            m_img_time_buffer.push_back(image->header.stamp.toSec());
+//            image_received = true;
+//            continue;
+//        }
+//        else
+//            ++m_iterator;
+//    }
+//    LOG(INFO) << "out the data | finish this dataset or some error";
+}

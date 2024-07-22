@@ -14,6 +14,8 @@ extern Global_map       g_map_rgb_pts_mesh;
 extern Triangle_manager g_triangles_manager;
 // extern Delaunay g_delaunay;
 extern std::vector< std::pair< std::vector< vec_4 >, Eigen::Matrix< double, NUMBER_OF_POSE_SIZE, 1 > > > g_eigen_vec_vec;
+extern std::mutex g_mutex_pts_vector;
+
 
 double minimum_cell_volume = 0.2 * 0.2 * 0.2 * 0.0;
 double minimum_height = 0.000;
@@ -466,9 +468,11 @@ std::vector< RGB_pt_ptr > remove_outlier_pts( const std::vector< RGB_pt_ptr > &r
     // 在许多图形API中，默认不渲染面向远离摄像机的面 - 我们这里的mesh只考虑一个方向的面
 void correct_triangle_index( Triangle_ptr &ptr, const vec_3 &camera_center, const vec_3 &_short_axis )
 {
+//    g_mutex_pts_vector.lock();
     vec_3 pt_a = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 0 ] ]->get_pos( 1 );
     vec_3 pt_b = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 1 ] ]->get_pos( 1 );
     vec_3 pt_c = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ptr->m_tri_pts_id[ 2 ] ]->get_pos( 1 );
+//    g_mutex_pts_vector.unlock();
     vec_3 pt_ab = pt_b - pt_a;
     vec_3 pt_ac = pt_c - pt_a;
     vec_3 pt_tri_cam = camera_center - pt_a;

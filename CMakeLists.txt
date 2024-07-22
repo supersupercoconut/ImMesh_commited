@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(ImMesh)
 
-SET(CMAKE_BUILD_TYPE "Release")
+SET(CMAKE_BUILD_TYPE "Debug")
 
 ADD_COMPILE_OPTIONS(-std=c++17 )
 
@@ -16,13 +16,14 @@ if (ENABLE_ASAN)
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address -g")
 endif ()
 
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 
 # 优化策略设置 O1 与 O3 为什么程序出现的错误是不一样的
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=c++17 -g -O0 -ltbb -lboost_system -msse2 -msse3 -pthread -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=c++17 -g -O1 -ltbb -lboost_system -msse2 -msse3 -pthread -w")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=c++17 -g -O3 -ltbb -lboost_system -msse2 -msse3 -pthread -w") # -Wall
 
 message("Current CPU archtecture: ${CMAKE_SYSTEM_PROCESSOR}")

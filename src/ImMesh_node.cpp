@@ -115,7 +115,7 @@ bool   g_force_refresh_triangle = false;
 extern Common_tools::Axis_shader         g_axis_shader;
 extern Common_tools::Ground_plane_shader g_ground_plane_shader;
 
-ImVec4 g_mesh_color = ImVec4( 1.0, 1.0, 1.0, 1.0 );
+//ImVec4 g_mesh_color = ImVec4( 1.0, 1.0, 1.0, 1.0 );
 
 // config path
 string config_file;
@@ -146,46 +146,134 @@ void print_help_window( bool *if_display_help_win )
     ImGui::End();
 }
 /// @brief 计算一个窗口win_ssd中信息的平均位姿
-void get_last_avr_pose( int current_frame_idx, Eigen::Quaterniond &q_avr, vec_3 &t_vec )
+//void get_last_avr_pose( int current_frame_idx, Eigen::Quaterniond &q_avr, vec_3 &t_vec )
+//{
+//    const int win_ssd = 1;
+//    mat_3_3   lidar_frame_to_camera_frame;
+//    // Clang-format off
+//    lidar_frame_to_camera_frame << 0, 0, -1, -1, 0, 0, 0, 1, 0;
+//    // Clang-format on
+//    q_avr = Eigen::Quaterniond::Identity();
+//    t_vec = vec_3::Zero();
+//    if ( current_frame_idx < 1 )
+//    {
+//        return;
+//    }
+//    int                frame_count = 0;
+//    int                frame_s = std::max( 0, current_frame_idx - win_ssd );
+//    vec_3              log_angle_acc = vec_3( 0, 0, 0 );
+//    Eigen::Quaterniond q_first;
+//    for ( int frame_idx = frame_s; frame_idx < current_frame_idx; frame_idx++ )
+//    {
+//        std::shared_lock lock(g_mutex_eigen_vec_vec);
+//        if ( g_eigen_vec_vec[ frame_idx ].second.size() != 0 )
+//        {
+//            Eigen::Quaterniond pose_q( g_eigen_vec_vec[ frame_idx ].second.head< 4 >() );
+//            pose_q.normalize();
+//            if ( frame_count == 0 )
+//            {
+//                q_first = pose_q;
+//            }
+//            q_avr = q_avr * pose_q;
+//            log_angle_acc += Sophus::SO3d( q_first.inverse() * pose_q ).log();
+//            t_vec = t_vec + g_eigen_vec_vec[ frame_idx ].second.block( 4, 0, 3, 1 );
+//            frame_count++;
+//        }
+//    }
+//    t_vec = t_vec / frame_count;
+//    q_avr = q_first * Sophus::SO3d::exp( log_angle_acc / frame_count ).unit_quaternion();
+//    q_avr.normalize();
+//    q_avr = q_avr * Eigen::Quaterniond( lidar_frame_to_camera_frame );
+//}
+
+/// TODO GPT修改之后的版本 —— 获取会更好, 暂时先忽略这部分的问题
+void get_last_avr_pose(int current_frame_idx, Eigen::Quaterniond &q_avr, vec_3 &t_vec)
 {
     const int win_ssd = 1;
-    mat_3_3   lidar_frame_to_camera_frame;
-    // Clang-format off
+    mat_3_3 lidar_frame_to_camera_frame;
     lidar_frame_to_camera_frame << 0, 0, -1, -1, 0, 0, 0, 1, 0;
-    // Clang-format on
+
     q_avr = Eigen::Quaterniond::Identity();
     t_vec = vec_3::Zero();
-    if ( current_frame_idx < 1 )
+
+    if (current_frame_idx < 1)
     {
         return;
     }
-    int                frame_count = 0;
-    int                frame_s = std::max( 0, current_frame_idx - win_ssd );
-    vec_3              log_angle_acc = vec_3( 0, 0, 0 );
-    Eigen::Quaterniond q_first;
-    for ( int frame_idx = frame_s; frame_idx < current_frame_idx; frame_idx++ )
+
+    int frame_count = 0;
+    int frame_s = std::max(0, current_frame_idx - win_ssd);
+    vec_3 log_angle_acc = vec_3::Zero();
+    Eigen::Quaterniond q_first = Eigen::Quaterniond::Identity();
+
+    for (int frame_idx = frame_s; frame_idx < current_frame_idx; frame_idx++)
     {
         std::shared_lock lock(g_mutex_eigen_vec_vec);
-        if ( g_eigen_vec_vec[ frame_idx ].second.size() != 0 )
+        if (g_eigen_vec_vec[frame_idx].second.size() >= 7)  // 确保有足够的数据
         {
-            Eigen::Quaterniond pose_q( g_eigen_vec_vec[ frame_idx ].second.head< 4 >() );
+            Eigen::Quaterniond pose_q(g_eigen_vec_vec[frame_idx].second.head<4>());
+            if (!pose_q.coeffs().allFinite())
+            {
+                std::cout << "Warning: Invalid quaternion data at frame " << frame_idx << std::endl;
+                continue;
+            }
             pose_q.normalize();
-            if ( frame_count == 0 )
+
+            if (frame_count == 0)
             {
                 q_first = pose_q;
             }
+
             q_avr = q_avr * pose_q;
-            log_angle_acc += Sophus::SO3d( q_first.inverse() * pose_q ).log();
-            t_vec = t_vec + g_eigen_vec_vec[ frame_idx ].second.block( 4, 0, 3, 1 );
+
+            Sophus::SO3d diff_rotation = Sophus::SO3d(q_first.inverse() * pose_q);
+            vec_3 log_diff = diff_rotation.log();
+            if (log_diff.allFinite())
+            {
+                log_angle_acc += log_diff;
+            }
+            else
+            {
+                std::cout << "Warning: Invalid log at frame " << frame_idx << std::endl;
+            }
+
+            t_vec += g_eigen_vec_vec[frame_idx].second.block<3, 1>(4, 0);
             frame_count++;
         }
     }
-    t_vec = t_vec / frame_count;
-    q_avr = q_first * Sophus::SO3d::exp( log_angle_acc / frame_count ).unit_quaternion();
-    q_avr.normalize();
-    q_avr = q_avr * Eigen::Quaterniond( lidar_frame_to_camera_frame );
-}
 
+    if (frame_count > 0)
+    {
+        t_vec /= frame_count;
+        vec_3 average_log = log_angle_acc / frame_count;
+
+        if (average_log.allFinite())
+        {
+            try
+            {
+                q_avr = q_first * Sophus::SO3d::exp(average_log).unit_quaternion();
+            }
+            catch (const std::exception& e)
+            {
+                std::cout << "Error in SO3::exp: " << e.what() << std::endl;
+                std::cout << "average_log: " << average_log.transpose() << std::endl;
+                q_avr = q_first;  // 使用第一个四元数作为后备
+            }
+        }
+        else
+        {
+            std::cout << "Warning: Invalid average log, using first quaternion" << std::endl;
+            q_avr = q_first;
+        }
+    }
+    else
+    {
+        std::cout << "Warning: No valid frames processed" << std::endl;
+    }
+
+    q_avr.normalize();
+    q_avr = q_avr * Eigen::Quaterniond(lidar_frame_to_camera_frame);
+}
 
 int main( int argc, char **argv )
 {
@@ -200,9 +288,8 @@ int main( int argc, char **argv )
 
     ros::init( argc, argv, "laserMapping" );
     voxel_mapping.init_ros_node();  // 初始化ros节点
-    LOG(INFO)<<"------Starting laserMapping node------";
     GLFWwindow *window = g_gl_camera.init_openGL_and_ImGUI( "ImMesh", 1, voxel_mapping.m_GUI_font_size );
-    // 只需要知道glad对应的openGL中的一些基本功能即可
+//     只需要知道glad对应的openGL中的一些基本功能即可
     if ( !gladLoadGLLoader( ( GLADloadproc ) glfwGetProcAddress ) )
     {
         std::cout << "Failed to initialize GLAD" << std::endl;
@@ -262,7 +349,7 @@ int main( int argc, char **argv )
     g_gl_camera.m_gl_cam.m_camera_z_far = 1500;
     g_gl_camera.m_gl_cam.m_camera_z_near = 0.1;
 
-//     Rasterization configuration ( openGL能够之间生成相机视图 —— 这里对应的可能就是一个直接输出的深度相机图 )
+////     Rasterization configuration ( openGL能够之间生成相机视图 —— 这里对应的可能就是一个直接输出的深度相机图 )
     Cam_view m_depth_view_camera;
     m_depth_view_camera.m_display_w = 640;
     m_depth_view_camera.m_display_h = 480;
@@ -508,8 +595,8 @@ int main( int argc, char **argv )
         g_gl_camera.set_gl_camera_pose_matrix();
         g_gl_camera.draw_frame_finish();
     }
-
-    // Cleanup
+//
+//    // Cleanup
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -517,9 +604,7 @@ int main( int argc, char **argv )
     glfwDestroyWindow( window );
     glfwTerminate();
 
-
-
-//    thr_mapping.join();
+    thr_mapping.join();
     google::ShutdownGoogleLogging();
     return 0;
 }

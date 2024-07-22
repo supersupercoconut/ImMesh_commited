@@ -20,6 +20,10 @@
 #include "pointcloud_rgbd.hpp"
 #include <functional>
 
+// 用于直接从rosbag中读取数据
+#include <rosbag/bag.h>
+#include <rosbag/view.h>
+
 #define INIT_TIME ( 0.0 )
 #define MAXN ( 360000 )
 #define PUBFRAME_PERIOD ( 20 )
@@ -46,6 +50,7 @@ struct Point_clouds_color_data_package
         m_pose_t = pose_t;
         m_frame_idx = frame_idx;
     }
+    Point_clouds_color_data_package(){}
 };
 extern std::mutex                                            g_mutex_all_data_package_lock;
 extern std::list< Point_clouds_color_data_package >          g_rec_color_data_package_list;
@@ -279,7 +284,7 @@ class Voxel_mapping
     double      m_meshing_region_size = 10.0;
     int         m_if_enable_mesh_rec = 1;
     int         m_if_draw_mesh = 1;
-    int         m_meshing_maximum_thread_for_rec_mesh = 12;
+    int         m_meshing_maximum_thread_for_rec_mesh = 4;
     int         m_meshing_number_of_pts_append_to_map = 5000;
     std::string m_pointcloud_file_name = std::string( " " );
     // PointCloudXYZRGB::Ptr pcl_wait_pub_RGB(new PointCloudXYZRGB(500000, 1));
@@ -311,6 +316,14 @@ class Voxel_mapping
     eigen_q m_pose_c2w_q = eigen_q::Identity();
     vec_3 m_pose_c2w_t = vec_3(0, 0, 0);
     vec_3 m_image_norm = vec_3(1, 0, 0);
+
+    // rosbag读取数据的部分
+    std::string m_bag_file;
+    rosbag::Bag m_bag;
+    std::unique_ptr<rosbag::View> m_view;
+    rosbag::View::iterator m_iterator;
+//    rosbag::MessageInstance m_msg;
+    std::vector<std::string> m_topics;
 
     ////////////////////////////////////////////////////////////////////////////////////
 
@@ -452,5 +465,6 @@ class Voxel_mapping
     void image_equalize(cv::Mat &img, int amp);
 //    void start_point_colored_thread();
     void point_cloud_colored();
+    void read_ros_bag();
     //////////////////////////////////////////////////////////////////////////////////////////////////////
 };

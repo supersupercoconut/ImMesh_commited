@@ -11,7 +11,7 @@ extern Global_map                   g_map_rgb_pts_mesh;
 extern Triangle_manager             g_triangles_manager;
 extern LiDAR_frame_pts_and_pose_vec g_eigen_vec_vec;
 extern std::shared_mutex g_mutex_eigen_vec_vec;
-
+extern std::mutex g_mutex_pts_vector;
 extern Eigen::Matrix3d g_camera_K;
 // extern Eigen::Matrix3d lidar_frame_to_camera_frame;
 
@@ -87,9 +87,11 @@ struct Region_triangles_shader
         m_triangle_color_vec.resize( tri_angle_set.size() * 3 );
         // cout << "Number of pt_size = " << m_triangle_pt_list.size() << endl;
         int count = 0;
+//        g_mutex_pts_vector.lock();
         for ( Triangle_set::iterator it = tri_angle_set.begin(); it != tri_angle_set.end(); it++ )
         {
             // 平滑的作用大致就是去除一些噪声信息之类的 - 实际没有尝试去掉的效果
+
             for ( size_t pt_idx = 0; pt_idx < 3; pt_idx++ )
             {
                 if ( g_map_rgb_pts_mesh.m_rgb_pts_vec[ ( *it )->m_tri_pts_id[ pt_idx ] ]->m_smoothed == false )
@@ -101,6 +103,7 @@ struct Region_triangles_shader
             vec_3 pt_a = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ( *it )->m_tri_pts_id[ 0 ] ]->get_pos( 1 );
             vec_3 pt_b = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ( *it )->m_tri_pts_id[ 1 ] ]->get_pos( 1 );
             vec_3 pt_c = g_map_rgb_pts_mesh.m_rgb_pts_vec[ ( *it )->m_tri_pts_id[ 2 ] ]->get_pos( 1 );
+
             m_triangle_pt_vec[ count ] = pt_a.cast< float >();
             m_triangle_pt_vec[ count + 1 ] = pt_b.cast< float >();
             m_triangle_pt_vec[ count + 2 ] = pt_c.cast< float >();
@@ -121,6 +124,7 @@ struct Region_triangles_shader
 
             count = count + 3;
         }
+//        g_mutex_pts_vector.unlock();
     }
 
     void get_axis_min_max( vec_3f *axis_min_max = nullptr )
@@ -209,10 +213,10 @@ void display_current_LiDAR_pts( int current_frame_idx, double pts_size, vec_4f c
     }
     // 通过修改
     g_LiDAR_point_shader.set_point_attr( pts_size );
-    {
+//    {
         std::shared_lock lock(g_mutex_eigen_vec_vec);
         g_LiDAR_point_shader.set_pointcloud( g_eigen_vec_vec[ current_frame_idx ].first, vec_3( 1.0, 1.0, 1.0 ) );
-    }
+//    }
 
     g_LiDAR_point_shader.draw( g_gl_camera.m_gl_cam.m_glm_projection_mat,
                                Common_tools::eigen2glm( g_gl_camera.m_gl_cam.m_camera_pose_mat44_inverse ) );
