@@ -48,6 +48,8 @@ extern double g_kd_tree_accept_pt_dis;
 extern bool   g_force_refresh_triangle;
 vec_3f        g_axis_min_max[ 2 ];
 
+std::mutex g_mutex_region_triangles_shader;
+
 struct Region_triangles_shader
 {
     std::vector< vec_3f >               m_triangle_pt_vec;                  // 当前region中所有triangle中的顶点数据
@@ -58,7 +60,7 @@ struct Region_triangles_shader
     int                                 m_if_set_color = false;
     std::shared_ptr< std::mutex >       m_mutex_ptr = nullptr;
 
-    Region_triangles_shader() { m_mutex_ptr = std::make_shared< std::mutex >(); }
+    Region_triangles_shader() { /*m_mutex_ptr = std::make_shared< std::mutex >();*/ }
 
     void init_openGL_shader() { m_triangle_facet_shader.init( SHADER_DIR ); }
 
@@ -66,7 +68,8 @@ struct Region_triangles_shader
 
     void init_pointcloud()
     {
-        std::unique_lock< std::mutex > lock( *m_mutex_ptr );
+//        std::unique_lock< std::mutex > lock( *m_mutex_ptr );
+        std::unique_lock< std::mutex > lock( g_mutex_region_triangles_shader );
         if ( m_if_set_color )
         {
 //            m_triangle_facet_shader.set_pointcloud( m_triangle_pt_vec, g_axis_min_max, 2 );
@@ -82,7 +85,8 @@ struct Region_triangles_shader
     void unparse_triangle_set_to_vector( const Triangle_set &tri_angle_set )
     {
         // TODO: synchronized data buffer here:
-        std::unique_lock< std::mutex > lock( *m_mutex_ptr );
+        std::unique_lock< std::mutex > lock( g_mutex_region_triangles_shader );
+//        std::unique_lock< std::mutex > lock( *m_mutex_ptr );
         m_triangle_pt_vec.resize( tri_angle_set.size() * 3 );
         m_triangle_color_vec.resize( tri_angle_set.size() * 3 );
         // cout << "Number of pt_size = " << m_triangle_pt_list.size() << endl;
@@ -260,6 +264,7 @@ void synchronize_triangle_list_for_disp()
 {
     int region_size = g_triangles_manager.m_triangle_set_vector.size();
     bool if_force_refresh = g_force_refresh_triangle;
+//    std::lock_guard<std::mutex> lock(g_region_triangle_shader_mutex);
     for ( int region_idx = 0; region_idx < region_size; region_idx++ )
     {
         // 这里虽然说是 Sync_triangle_set 但其实际对应的是一个region中所有triangle数据
@@ -271,10 +276,8 @@ void synchronize_triangle_list_for_disp()
         {
             // new a shader
             region_triangles_shader_ptr = std::make_shared< Region_triangles_shader >();
-            g_region_triangle_shader_mutex.lock();
             g_map_region_triangles_shader.insert( std::make_pair( sync_triangle_set_ptr, region_triangles_shader_ptr ) );
             g_region_triangles_shader_vec.push_back( region_triangles_shader_ptr );
-            g_region_triangle_shader_mutex.unlock();
         }
         else
         {
@@ -319,8 +322,10 @@ void service_refresh_and_synchronize_triangle( double sleep_time )
 void draw_triangle( const Cam_view &gl_cam )
 {
     int region_size = g_region_triangles_shader_vec.size();
+//    std::lock_guard<std::mutex> lock(g_region_triangle_shader_mutex);
     for ( int region_idx = 0; region_idx < region_size; region_idx++ )
     {
+        /// @attention 全局变量又不上锁...
         g_region_triangles_shader_vec[ region_idx ]->m_triangle_facet_shader.m_if_draw_face = g_display_face;
         g_region_triangles_shader_vec[ region_idx ]->m_if_set_color = g_mesh_if_color;
         // draw是自定义的一个函数，是mesh重建的关键 | 在另一个线程中已经完成了 g_region_triangles_shader_vec 中每一个shader对应的triangle顶点数据

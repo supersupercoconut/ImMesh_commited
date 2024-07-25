@@ -88,6 +88,7 @@ class Triangle;
 class Global_map;
 class RGB_Voxel;
 using RGB_voxel_ptr = std::shared_ptr< RGB_Voxel >;
+using w_RGB_voxel_ptr = std::weak_ptr< RGB_Voxel >;
 
 class RGB_pts
 {
@@ -113,7 +114,8 @@ class RGB_pts
     
     int   m_is_out_lier_count = 0;
     int                       m_is_inner_pt = 0 ;
-    RGB_voxel_ptr             m_parent_voxel  = nullptr;
+//    RGB_voxel_ptr             m_parent_voxel  = nullptr;
+    w_RGB_voxel_ptr m_parent_voxel  = {};
 #if IF_DBG_COLOR
     cv::Scalar m_dbg_color;
 #endif
@@ -212,7 +214,7 @@ class RGB_Voxel
         m_pos[1] = y;
         m_pos[2] = z;
         m_center = vec_3( x * g_voxel_resolution, y * g_voxel_resolution, z * g_voxel_resolution );
-        m_pts_in_grid = {};
+        m_pts_in_grid.reserve(150);  // 一个voxel中最多150个点 也是完全足够的
     };
 
     void refresh_triangles();
@@ -269,6 +271,9 @@ struct Global_map
     std::shared_ptr< std::mutex >                m_mutex_rgb_pts_in_recent_hitted_boxes;
     std::shared_ptr< std::mutex >                m_mutex_m_box_recent_hitted;
     std::shared_ptr< std::mutex >                m_mutex_pts_last_visited;
+    //// 自定义一个关于hash表的锁 ////
+    std::shared_ptr<std::mutex> m_mutex_hash_voxel;
+
     KD_TREE< KDtree_pt >                         m_kdtree;
     Image_frame                                  m_img_for_projection;
     double                                       m_recent_visited_voxel_activated_time = 0.0;
@@ -372,12 +377,6 @@ inline void save( Archive &ar, const Global_map &global_map, const unsigned int 
     }
     cout << endl;
 }
-
-
-
-
-
-
 
 
 template < typename Archive >

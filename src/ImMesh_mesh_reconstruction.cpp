@@ -29,7 +29,8 @@ int        g_maximum_thread_for_rec_mesh;
 std::mutex g_mutex_append_map;
 std::mutex g_mutex_reconstruct_mesh;
 std::mutex g_mutex_pts_vector;
-
+std::mutex g_mutex_kdtree;
+std::mutex g_mutex_hash_voxel;
 extern double g_LiDAR_frame_start_time;
 double        g_vx_map_frame_cost_time;
 static double g_LiDAR_frame_avg_time;
@@ -78,7 +79,8 @@ namespace{
     const double image_obs_cov = 1.5;
     const double process_noise_sigma = 0.15;
 }
-std::ofstream file("frame_ids.txt", std::ios::app);
+
+std::ofstream file("reconstruction.txt", std::ios::app);
 // 函数重载 - 使用所有数据的mesh重建函数 - 包含点云渲染以及mesh重建
 void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr frame_pts, cv::Mat img, Eigen::Quaterniond pose_q, Eigen::Vector3d pose_t, int frame_idx )
 {
@@ -88,15 +90,15 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
     }
 
-    if(frame_pts == nullptr)
+    if(frame_pts == nullptr || frame_pts->points.empty())
     {
         LOG(ERROR) << "incremental_mesh_reconstruction : frame_pts is nullptr";
         return;
     }
 
-    if (file.is_open()) {
-        file << "frame_idx: " << frame_idx <<" | incremental_mesh_reconstruction | frame_pts size: " << frame_pts->points.size() << std::endl;
-    }
+//    if (file.is_open()) {
+//        file << "frame_idx: " << frame_idx <<" | incremental_mesh_reconstruction | frame_pts size: " << frame_pts->points.size() << std::endl;
+//    }
 
     /*** 打包点云数据 - 这部分用于GUI中的点云信息的生成 ***/
     Eigen::Matrix< double, 7, 1 > pose_vec;
@@ -116,24 +118,179 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     int append_point_step = std::max( ( int ) 1, ( int ) std::round( frame_pts->points.size() / appending_pts_frame ) );
     Common_tools::Timer tim, tim_total;
     // g_map_rgb_pts_mesh 对应的为全局地图 | 上锁可能是由于 incremental_mesh_reconstruction 这个函数是在线程池中进行commit_task执行的 | 数据送入全局地图之后并没有进行降采样
-        // g_mutex_append_map 这个互斥锁是保护g_map_rgb_pts_mesh类本身的操作 —— 防止其他线程来执行这部分的操作
 
     /// @bug 有时候也会出现这里有问题的debug信息 | debug中频繁出现的Finish the append_points_to_global_map提示是在这里直接return了 但是frame_id却没有更新(应该是进入了这个函数但是我估计没有成功修改掉)
+//    g_mutex_append_map.lock();
+//    if( !(g_map_rgb_pts_mesh.append_points_to_global_map( *frame_pts, frame_idx, nullptr, append_point_step )))
+//    {
+////        ++append_id;
+//        g_mutex_append_map.unlock();
+//        LOG(ERROR) << "[frame_idx]:" << frame_idx << " || There is a memory fault in append_points_to_global_map ";
+//        return;
+//    }
+//    ++append_id;
+//    g_mutex_append_map.unlock();
+//    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the append_points_to_global_map ";
+
+
+    int acc = 0;
+    int rej = 0;
+    std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited;
+    voxels_recent_visited.clear();
+
+    int pt_size = frame_pts->points.size();
+    KDtree_pt_vector     pt_vec_vec;
+    std::vector< float > dist_vec;
+
+    RGB_voxel_ptr* temp_box_ptr_ptr;
+    double minimum_pts_size = g_map_rgb_pts_mesh.m_minimum_pts_size;
+    double voxel_resolution = g_map_rgb_pts_mesh.m_voxel_resolution;
+
     g_mutex_append_map.lock();
-    if( !(g_map_rgb_pts_mesh.append_points_to_global_map( *frame_pts, frame_idx, nullptr, append_point_step )))
+
+//    for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += append_point_step )
+//    {
+//        int  add = 1;
+//        int  grid_x = std::round( frame_pts->points[ pt_idx ].x / minimum_pts_size );
+//        int  grid_y = std::round( frame_pts->points[ pt_idx ].y / minimum_pts_size );
+//        int  grid_z = std::round( frame_pts->points[ pt_idx ].z / minimum_pts_size );
+//        int  box_x = std::round( frame_pts->points[ pt_idx ].x / voxel_resolution );
+//        int  box_y = std::round( frame_pts->points[ pt_idx ].y / voxel_resolution );
+//        int  box_z = std::round( frame_pts->points[ pt_idx ].z / voxel_resolution );
+//        auto pt_opt = g_map_rgb_pts_mesh.m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );
+//        if (pt_opt.has_value())
+//            add = 0;
+//
+//        std::optional<RGB_voxel_ptr> box_opt = g_map_rgb_pts_mesh.m_hashmap_voxels.get_data(box_x, box_y, box_z);
+//        RGB_voxel_ptr box_ptr;
+//
+//        if (!box_opt.has_value())
+//        {
+//            box_ptr = std::make_shared<RGB_Voxel>(box_x, box_y, box_z);
+//            g_map_rgb_pts_mesh.m_hashmap_voxels.insert(box_x, box_y, box_z, box_ptr);
+////            auto a = g_map_rgb_pts_mesh.m_hashmap_voxels.get_data(box_x, box_y, box_z);
+////            LOG(INFO) << a->use_count() << " " << a.value()->m_pts_in_grid.size() ;
+////            file << "--------  new voxel | " << "use_count " << box_ptr.use_count() << " | m_pts_in_grid.size() " << box_ptr->m_pts_in_grid.size() << endl;
+//        }
+//        else
+//        {
+//            // 安全检查
+//            if (!box_opt || box_opt.value().use_count() <= 0 || box_opt.value().use_count() >= 30 || box_opt.value()->m_pts_in_grid.size() >= 1000)
+//            {
+//                LOG(ERROR) << "Invalid box_ptr or too many points in grid: "
+//                           << (box_opt ? box_opt.value()->m_pts_in_grid.size() : 0);
+//                continue;
+//            }
+//
+//            box_ptr = box_opt.value();
+//        }
+
+
+    for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += append_point_step )
     {
-//        ++append_id;
-        g_mutex_append_map.unlock();
-        LOG(ERROR) << "[frame_idx]:" << frame_idx << " || There is a memory fault in append_points_to_global_map ";
-        return;
+        int  add = 1;
+        int  grid_x = std::round( frame_pts->points[ pt_idx ].x / minimum_pts_size );
+        int  grid_y = std::round( frame_pts->points[ pt_idx ].y / minimum_pts_size );
+        int  grid_z = std::round( frame_pts->points[ pt_idx ].z / minimum_pts_size );
+        int  box_x = std::round( frame_pts->points[ pt_idx ].x / voxel_resolution );
+        int  box_y = std::round( frame_pts->points[ pt_idx ].y / voxel_resolution );
+        int  box_z = std::round( frame_pts->points[ pt_idx ].z / voxel_resolution );
+        auto pt_ptr = g_map_rgb_pts_mesh.m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );
+        if ( pt_ptr != nullptr )
+            add = 0;
+
+        /// @bug 这里的 box_ptr也会出现 {use count 1811941585 weak count 32762} 这种情况 | 这里不是上锁导致的问题, 因为单线程运行这部分的程序, 程序一样出现问题！！！ 原因是是这里的hashmap_voxels中的数据出现了问题 !!!
+        RGB_voxel_ptr box_ptr;
+        temp_box_ptr_ptr = g_map_rgb_pts_mesh.m_hashmap_voxels.get_data( box_x, box_y, box_z );
+        if ( temp_box_ptr_ptr == nullptr )
+        {
+            box_ptr = std::make_shared< RGB_Voxel >( box_x, box_y, box_z );
+            // m_hashmap_voxels 该变量是用于存储所有的voxel数据的 | 这里是对voxel数据进行了上锁
+            g_map_rgb_pts_mesh.m_hashmap_voxels.insert( box_x, box_y, box_z, box_ptr );
+            // 这个数据只被储存, 但是没有被后续使用
+//            g_map_rgb_pts_mesh.m_voxel_vec.push_back( box_ptr );
+        }
+        else
+        {
+            /// @bug 通过debug的时候发现 temp_box_ptr_ptr从hash表返回数据的时候会出现 use_count异常 以及 其中m_pts_in_grid这些数据的异常导致后续在box_ptr->m_pts_in_grid.push_back( pt_rgb ); 均出现异常
+            if( temp_box_ptr_ptr->use_count() <= 0 || temp_box_ptr_ptr->use_count() >= 100 || (*temp_box_ptr_ptr)->m_pts_in_grid.size() >= 1000)
+            {
+                LOG(ERROR) << "temp_box_ptr_ptr error !!  "  << temp_box_ptr_ptr->use_count() << " " << (*temp_box_ptr_ptr)->m_pts_in_grid.size();
+//                g_mutex_append_map.unlock();
+                continue;
+            }
+            box_ptr = *temp_box_ptr_ptr;
+        }
+
+        if(box_ptr == nullptr || box_ptr.use_count() <= 0 || box_ptr.use_count() >= 100)
+            continue;
+
+        voxels_recent_visited.insert( box_ptr );
+        box_ptr->m_last_visited_time = frame_idx;
+        if ( add == 0 )
+        {
+            rej++;
+            continue;
+        }
+
+        /// TODO 这里可以考虑对 KDtree 进行保护 ——
+        acc++;
+        KDtree_pt kdtree_pt( vec_3( frame_pts->points[ pt_idx ].x, frame_pts->points[ pt_idx ].y, frame_pts->points[ pt_idx ].z ), 0 );
+        if ( g_map_rgb_pts_mesh.m_kdtree.Root_Node != nullptr )
+        {
+            g_map_rgb_pts_mesh.m_kdtree.Nearest_Search( kdtree_pt, 1, pt_vec_vec, dist_vec );
+            if ( pt_vec_vec.size() )
+            {
+                if ( sqrt( dist_vec[ 0 ] ) < minimum_pts_size )
+                {
+                    continue;
+                }
+            }
+        }
+
+
+        /// @attention 考虑保护m_rgb_pts_vec这个部分
+        std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
+//        LOG(INFO) << "pt_idx: " << pt_idx << " " << frame_pts->points[ pt_idx ].x << " " << frame_pts->points[ pt_idx ].y << " " << frame_pts->points[ pt_idx ].z;
+//        pt_rgb->set_pos( vec_3( frame_pts->points[ pt_idx ].x, frame_pts->points[ pt_idx ].y, frame_pts->points[ pt_idx ].z ) );
+
+        double x = frame_pts->points[pt_idx].x;
+        double y = frame_pts->points[pt_idx].y;
+        double z = frame_pts->points[pt_idx].z;
+        pt_rgb->set_pos(vec_3(x, y, z));
+
+        pt_rgb->m_pt_index = g_map_rgb_pts_mesh.m_rgb_pts_vec.size();
+        kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
+        g_map_rgb_pts_mesh.m_rgb_pts_vec.push_back( pt_rgb );
+
+        g_map_rgb_pts_mesh.m_hashmap_3d_pts.insert( grid_x, grid_y, grid_z, pt_rgb );
+        if ( box_ptr != nullptr )
+        {
+            box_ptr->m_pts_in_grid.push_back( pt_rgb );
+            // box_ptr->add_pt(pt_rgb);
+            box_ptr->m_new_added_pts_count++;
+            box_ptr->m_meshing_times = 0;
+//            file << "-------- new points | " << "use_count " << box_ptr.use_count() << " | m_pts_in_grid.size() " << box_ptr->m_pts_in_grid.size() << endl;
+        }
+        else
+        {
+            scope_color( ANSI_COLOR_RED_BOLD );
+            for ( int i = 0; i < 100; i++ )
+            {
+                cout << "box_ptr is nullptr!!!" << endl;
+            }
+        }
+        // Add to kdtree
+        g_map_rgb_pts_mesh.m_kdtree.Add_Point( kdtree_pt, false );
+
     }
-    ++append_id;
     g_mutex_append_map.unlock();
+    append_id++;
+    g_map_rgb_pts_mesh.m_mutex_m_box_recent_hitted->lock();
+    g_map_rgb_pts_mesh.m_voxels_recent_visited = voxels_recent_visited;
+    g_map_rgb_pts_mesh.m_mutex_m_box_recent_hitted->unlock();
     LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the append_points_to_global_map ";
 
-    g_map_rgb_pts_mesh.m_mutex_m_box_recent_hitted->lock();
-    std::unordered_set< std::shared_ptr< RGB_Voxel > > voxels_recent_visited = g_map_rgb_pts_mesh.m_voxels_recent_visited;
-    g_map_rgb_pts_mesh.m_mutex_m_box_recent_hitted->unlock();
 
     /*** 位姿变换 ***/
     Eigen::Matrix3d rot_i2w = pose_q.toRotationMatrix();
@@ -188,7 +345,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 //                       [&]( const cv::Range& r ) { thread_render_pts_in_voxel( r.start, r.end, image_pose, &voxels_for_render, image_pose->m_timestamp ); } );
 //    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
 
-
     // 模仿immesh里面mesh重建的部分 —— 直接在这里写成tbb的加速 | 因为这个部分只会调用全局地图中的点云数据,所以上的是与之前相同的锁
 //    std::atomic<long> my_render_pts_count;
 
@@ -203,6 +359,9 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             g_mutex_append_map.lock();
             for (int voxel_idx = r.start; voxel_idx < r.end; voxel_idx++) {
                 RGB_voxel_ptr voxel_ptr = voxels_for_render[voxel_idx];
+
+                if(voxel_ptr == nullptr || voxel_ptr.use_count() <= 0 || voxel_ptr.use_count() >= 100)
+                    continue;
                 for (int pt_idx = 0; pt_idx < voxel_ptr->m_pts_in_grid.size(); pt_idx++) {
                     pt_w = voxel_ptr->m_pts_in_grid[pt_idx]->get_pos();
                     if (image_pose->project_3d_point_in_this_img(pt_w, u, v, nullptr, 1.0) == false)
@@ -217,10 +376,11 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 //                        my_render_pts_count++;
                     }
                 }
+
             }
             g_mutex_append_map.unlock();
         });
-        LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
+//        LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the rendering ";
     }
     catch ( ... )
     {
@@ -231,6 +391,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         return;
     }
 
+//    g_mutex_append_map.unlock();
 
     /*** 发布线程 ***/
 //    g_map_rgb_pts_mesh.m_last_updated_frame_idx++;
@@ -273,9 +434,8 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             // 每一次执行时定义的临时变量 | 获取neighbor_voxels中的所有特征点(现在还没有去获取周围voxel的特征点) | 如果仅仅获取当前voxel中的RGB点,是不是不需要上锁(因为一次只访问单独的一个voxel，不同线程之间不会有冲突)
             std::unordered_set< std::shared_ptr< RGB_Voxel > > neighbor_voxels;
             neighbor_voxels.insert( voxel );
-
-
             g_mutex_append_map.lock();
+
             std::vector< RGB_pt_ptr > pts_in_voxels = retrieve_pts_in_voxels( neighbor_voxels );
             if ( pts_in_voxels.size() < 3 )
             {
@@ -283,12 +443,13 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
                 return;
             }
             g_mutex_append_map.unlock();
-
             // Voxel-wise mesh pull
 //            g_mutex_pts_vector.lock();
             pts_in_voxels = retrieve_neighbor_pts_kdtree( pts_in_voxels );
             // 这里虽然是删除, 但是不会影响原始数据(所以与rendering线程崩溃的部分没有关系)
             pts_in_voxels = remove_outlier_pts( pts_in_voxels, voxel );
+
+
 
             // pts_in_voxels 对应的是所有RGB点 | relative_point_indices 获取到所有点的id号
             std::set< long > relative_point_indices;
@@ -342,7 +503,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 //            g_mutex_pts_vector.unlock();
 
             /** 从现在开始, 整个系统中最重要的数据结构出现了 —— Triangle_manager 在后续中被使用 **/
-            /// TODO 这里需要整理一些 triangle的顶点信息 - 主要这些顶点的颜色信息是在哪里生成的
             // triangles_sets 为这些点目前对应的所有triangle信息
             Triangle_set triangles_sets = g_triangles_manager.find_relative_triangulation_combination( relative_point_indices );
             Triangle_set triangles_to_remove, triangles_to_add, existing_triangle;
@@ -366,12 +526,11 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             // 这里只是做了关于add与remove的整理 将一个voxel与其对应的triangle进行了整理 | 具体要处理的部分还是要在pull模块处理掉
             removed_triangle_list.emplace( std::make_pair( voxel, triangles_to_remove ) );
             added_triangle_list.emplace( std::make_pair( voxel, triangles_to_add ) );
-//            existing_triangle_list.emplace( std::make_pair( voxel, existing_triangle ) );
 
 //            voxel_idx++;
         } );
 
-        LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the delaunay_triangulation + triangle_compare + correct_triangle_index";
+//        LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the delaunay_triangulation + triangle_compare + correct_triangle_index";
 
     }
     catch ( ... )
@@ -674,6 +833,7 @@ void service_reconstruct_mesh()
         LOG(INFO) << "The total thread of Thread pool is: " << g_maximum_thread_for_rec_mesh;
         g_thread_pool_rec_mesh = std::make_shared< Common_tools::ThreadPool >( g_maximum_thread_for_rec_mesh );
     }
+
     int drop_frame_num = 0;
     while ( 1 ) {
         // 等待数据
@@ -705,14 +865,14 @@ void service_reconstruct_mesh()
         g_mutex_all_data_package_lock.lock();
         Point_clouds_color_data_package data_pack_front;
 
-        if (g_rec_color_data_package_list.size() > 30)
+        if (g_rec_color_data_package_list.size() > 20)
         {
             LOG(INFO) << "Poor real-time performance, current buffer size = " << g_rec_color_data_package_list.size();
         }
 
 
-        // 手动控制 —— 玄学认为 全局加点 与 mesh重建线程的区别是线程池出现问题的根源
-        if ( append_id - mesh_id >= 0 && append_id - mesh_id <= 12)
+        // 手动控制 —— 玄学认为 全局加点 与 mesh重建线程的区别是线程池出现问题的根源 | 直接保证目前使用的线程数量不会超过线程池中的数量
+        if ( append_id - mesh_id >= 0 && append_id - mesh_id <= g_maximum_thread_for_rec_mesh-1)
         {
             data_pack_front = g_rec_color_data_package_list.front();
             g_rec_color_data_package_list.pop_front();
@@ -727,6 +887,7 @@ void service_reconstruct_mesh()
         }
         else
         {
+            LOG(INFO) << "Appending points is too faster than meshing";
             std::this_thread::sleep_for( std::chrono::microseconds( 50 ) );
             g_mutex_all_data_package_lock.unlock();
             continue;
@@ -759,15 +920,16 @@ void service_reconstruct_mesh()
                                                     data_pack_front.m_pose_q,
                                                     data_pack_front.m_pose_t,
                                                     data_pack_front.m_frame_idx);
-
-                    if (file.is_open()) {
-                        file << "m_frame_idx: " << data_pack_front.m_frame_idx << " | append_id: " << append_id << " | mesh_id: " << mesh_id << std::endl;
-                    } else {
-                        std::cerr << "Unable to open file for writing frame IDs" << std::endl;
-                    }
                 });
 
-//                // 这里感觉是在线程池里面重复执行这个函数的时候导致的错误
+                if (file.is_open()) {
+                    file << "m_frame_idx: " << data_pack_front.m_frame_idx << " | append_id: " << append_id << " | mesh_id: " << mesh_id << std::endl;
+                } else {
+                    std::cerr << "Unable to open file for writing frame IDs" << std::endl;
+                }
+
+
+//                // 这里感觉是在线程池里面重复执行这个函数的时候导致的错误 | 单线程离线调试的作用就是可以直接调试GUI显示 | 函数中设置的锁作用也不大了
 //                incremental_mesh_reconstruction(data_pack_front.m_frame_pts,
 //                                                data_pack_front.m_img,
 //                                                data_pack_front.m_pose_q,

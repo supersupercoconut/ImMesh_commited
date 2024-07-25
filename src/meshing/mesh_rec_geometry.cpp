@@ -159,6 +159,7 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
         Triangle                         tri( add_triangles[ i ], add_triangles[ i + 1 ], add_triangles[ i + 2 ] );
         std::pair< Triangle_ptr, bool > *temp_pair_ptr =
                 all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
+        // 使用的C++17上面提供的解决方法
         if ( temp_pair_ptr != nullptr )
         {
             temp_pair_ptr->second = false;
@@ -184,44 +185,44 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
 }
 
 // 函数重载 —— 将当前存在的三角与新来的三角都放到一起(新来的三角需要插入, 当前存在的三角需要更新颜色)
-void triangle_compare( const Triangle_set &remove_triangles, const std::vector< long > &add_triangles, Triangle_set &res_remove_triangles,
-                       Triangle_set &res_add_triangles /*Triangle_set *exist_triangles*/ )
-{
-    Hash_map_3d< long, std::pair< Triangle_ptr, bool > > all_remove_triangles_list;
-    for ( const Triangle_ptr &tri_ptr : remove_triangles )
-    {
-        all_remove_triangles_list.insert( tri_ptr->m_tri_pts_id[ 0 ], tri_ptr->m_tri_pts_id[ 1 ], tri_ptr->m_tri_pts_id[ 2 ],
-                                          std::make_pair( tri_ptr, true ) );
-    }
-    for ( int i = 0; i < add_triangles.size(); i += 3 )
-    {
-        Triangle                         tri( add_triangles[ i ], add_triangles[ i + 1 ], add_triangles[ i + 2 ] );
-        std::pair< Triangle_ptr, bool > *temp_pair_ptr =
-                all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
-        if ( temp_pair_ptr != nullptr )
-        {
-            temp_pair_ptr->second = false;
-            res_add_triangles.insert( temp_pair_ptr->first );
-//            if ( exist_triangles != nullptr )
-//            {
-//                exist_triangles->insert( temp_pair_ptr->first );
-//            }
-        }
-        else
-        {
-            res_add_triangles.insert( std::make_shared< Triangle >( tri ) );
-        }
-
-    }
-
-    for ( auto &it : all_remove_triangles_list.m_map_3d_hash_map )
-    {
-        if ( it.second.second )
-        {
-            res_remove_triangles.insert( it.second.first );
-        }
-    }
-}
+//void triangle_compare( const Triangle_set &remove_triangles, const std::vector< long > &add_triangles, Triangle_set &res_remove_triangles,
+//                       Triangle_set &res_add_triangles /*Triangle_set *exist_triangles*/ )
+//{
+//    Hash_map_3d< long, std::pair< Triangle_ptr, bool > > all_remove_triangles_list;
+//    for ( const Triangle_ptr &tri_ptr : remove_triangles )
+//    {
+//        all_remove_triangles_list.insert( tri_ptr->m_tri_pts_id[ 0 ], tri_ptr->m_tri_pts_id[ 1 ], tri_ptr->m_tri_pts_id[ 2 ],
+//                                          std::make_pair( tri_ptr, true ) );
+//    }
+//    for ( int i = 0; i < add_triangles.size(); i += 3 )
+//    {
+//        Triangle                         tri( add_triangles[ i ], add_triangles[ i + 1 ], add_triangles[ i + 2 ] );
+//        std::pair< Triangle_ptr, bool > *temp_pair_ptr =
+//                all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
+//        if ( temp_pair_ptr != nullptr )
+//        {
+//            temp_pair_ptr->second = false;
+//            res_add_triangles.insert( temp_pair_ptr->first );
+////            if ( exist_triangles != nullptr )
+////            {
+////                exist_triangles->insert( temp_pair_ptr->first );
+////            }
+//        }
+//        else
+//        {
+//            res_add_triangles.insert( std::make_shared< Triangle >( tri ) );
+//        }
+//
+//    }
+//
+//    for ( auto &it : all_remove_triangles_list.m_map_3d_hash_map )
+//    {
+//        if ( it.second.second )
+//        {
+//            res_remove_triangles.insert( it.second.first );
+//        }
+//    }
+//}
 
 
 /// @brief 整个voxel中的点云以及voxel外围的一部分邻居点云 | 需要计算投影平面, 又生成convex_hull_index(凸包)以及inner_hull_index(内部点)进行处理 - 但点是convex或者是inner点与最后生成的三角形无关(闭包或者内部点都会用于三角mesh的生成)
@@ -452,7 +453,8 @@ std::vector< RGB_pt_ptr > remove_outlier_pts( const std::vector< RGB_pt_ptr > &r
     {
         if ( rgb_pts_vec[ i ]->m_is_inner_pt == 1 )
         {
-            if ( rgb_pts_vec[ i ]->m_parent_voxel != voxel_ptr )
+            // 对于weak_ptr使用lock可以得到shared_ptr 所以可以直接进行比较
+            if ( rgb_pts_vec[ i ]->m_parent_voxel.lock() != voxel_ptr )
             {
                 remove_count++;
                 continue;

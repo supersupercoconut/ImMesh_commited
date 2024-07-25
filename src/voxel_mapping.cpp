@@ -1637,8 +1637,8 @@ void Voxel_mapping::lio_state_estimation( StatesGroup &state_propagat )
 void Voxel_mapping::init_ros_node()
 {
     m_ros_node_ptr = std::make_shared< ros::NodeHandle >();
-    read_ros_parameters( *m_ros_node_ptr );
-//    readParameters(config_file);
+//    read_ros_parameters( *m_ros_node_ptr );
+    readParameters(config_file);
 
 }
 
@@ -1781,15 +1781,14 @@ int Voxel_mapping::service_LiDAR_update()
     m_bag.open(m_bag_file, rosbag::bagmode::Read);
     m_view = std::make_unique<rosbag::View>(m_bag, rosbag::TopicQuery(m_topics));
     m_iterator = m_view->begin();
-//    read_ros_bag();
     // 整个lidar数据处理的核心
     while ( ( status = ros::ok() ) )
     {
         if ( m_flg_exit )
             break;
-          ros::spinOnce();
-//        read_ros_bag();     // 更换成读取rosbag中的数据
-
+//          ros::spinOnce();
+        read_ros_bag();     // 更换成读取rosbag中的数据
+        std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );     // 延迟时间 —— 要不然mesh比这里满太多了
         /// @bug 这里syn_packages( m_Lidar_Measures )可能会在 回调函数没有执行的时候进入一种死循环中，如果在这里调用其数据就会报错(即最常见的段错误)
         // m_Lidar_Measures中虽然有一个measurement的deque，imu与图像数据被累积起来 | 这里使用的是暂时的数据打包策略 | 因为这里是使用的
         if ( !sync_packages( m_Lidar_Measures ) )

@@ -48,7 +48,8 @@ Dr. Fu Zhang < fuzhang@hku.hk >.
 #pragma once
 #include "unordered_map"
 #include "iostream"
-
+#include <mutex>
+#include <shared_mutex>
 #if 1
 
 #define HASH_PRIME 116101 
@@ -86,6 +87,9 @@ struct Hash_map_3d
     double N = 1;
     using hash_3d_T = std::unordered_map< Hash_3D_key, T >;
     hash_3d_T m_map_3d_hash_map;
+    // 读写锁 方便多线程使用
+    std::shared_mutex hash_mutex;
+
     Hash_map_3d()
     {
         if ( std::is_same< float, data_type >::value )
@@ -99,6 +103,8 @@ struct Hash_map_3d
     }
     T* get_data(const data_type &x, const data_type &y, const data_type &z)
     {
+//        std::lock_guard<std::mutex> lock(m_mutex);
+        std::shared_lock<std::shared_mutex> lock(hash_mutex);
         if( m_map_3d_hash_map.size() == 0 )
         {
             return nullptr;
@@ -119,10 +125,25 @@ struct Hash_map_3d
         m_map_3d_hash_map.reserve(size);
     }
 
-    void insert( const data_type &x, const data_type &y, const data_type &z, const T &target ) { m_map_3d_hash_map[ Hash_3D_key( x * N, y * N, z * N ) ] = target; }
+    void insert( const data_type &x, const data_type &y, const data_type &z, const T &target ) {
+//        std::lock_guard<std::mutex> lock(m_mutex);
+//        std::unique_lock<std::shared_mutex> lock(hash_mutex);
+//        m_map_3d_hash_map[ Hash_3D_key( x * N, y * N, z * N ) ] = target;
+        std::unique_lock<std::shared_mutex> lock(hash_mutex);
+        int64_t hx = static_cast<int64_t>(x * N);
+        int64_t hy = static_cast<int64_t>(y * N);
+        int64_t hz = static_cast<int64_t>(z * N);
+        if (hx != x * N || hy != y * N || hz != z * N) {
+            // 处理溢出
+            throw std::overflow_error("Integer overflow in hash key computation");
+        }
+        m_map_3d_hash_map[Hash_3D_key(hx, hy, hz)] = target;
+    }
 
     int if_exist( const data_type &x, const data_type &y, const data_type &z )
     {
+        std::shared_lock<std::shared_mutex> lock(hash_mutex);
+//        std::lock_guard<std::mutex> lock(m_mutex);
         if ( m_map_3d_hash_map.find( Hash_3D_key( x * N, y * N, z * N ) ) == m_map_3d_hash_map.end() )
         {
             return 0;
@@ -130,9 +151,14 @@ struct Hash_map_3d
         return 1;
     }
 
-    void clear() { m_map_3d_hash_map.clear(); }
+    void clear() {
+//        std::lock_guard<std::mutex> lock(m_mutex);
+        m_map_3d_hash_map.clear(); }
 
-    int total_size() { return m_map_3d_hash_map.size(); }
+    int total_size() {
+        std::shared_lock<std::shared_mutex> lock(hash_mutex);
+//        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_map_3d_hash_map.size(); }
 };
 
 #else

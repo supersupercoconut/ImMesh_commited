@@ -476,78 +476,235 @@ template < typename T >
 int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double added_time, std::vector< std::shared_ptr< RGB_pts > >* pts_added_vec,
                                              int step, int disable_append )
 {
-//    std::unique_lock< std::mutex > lock( g_mutex_append_points_process );
-
+////    std::unique_lock< std::mutex > lock( g_mutex_append_points_process );
+//
+////    m_in_appending_pts = 1;
+////    Common_tools::Timer tim;
+////    tim.tic();
+////    int acc = 0;
+////    int rej = 0;
+////
+////    // clear的作用只是清空数据,但是不会让其指向一个nullptr的部分
+////    if ( pts_added_vec != nullptr )
+////    {
+////        pts_added_vec->clear();
+////    }
+////    // m_recent_visited_voxel_activated_time感觉恒为0 | 这里的time我感觉是次数的意思
+////    if ( m_recent_visited_voxel_activated_time == 0 )
+////    {
+////        voxels_recent_visited.clear();
+////    }
+////    else
+////    {
+////        // m_mutex_m_box_recent_hitted这个锁就是为了m_voxels_recent_visited而设置出来的锁
+////        m_mutex_m_box_recent_hitted->lock();
+////        // 交换值 ( 时间复杂度为O(1) ) -> 并不是元素之间转换,是这两个vector中指向数据部分的指针直接互换
+////        std::swap( voxels_recent_visited, m_voxels_recent_visited );
+////        m_mutex_m_box_recent_hitted->unlock();
+////
+////        for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
+////        {
+////            // 删除一些之前的数据(因为这里的m_recent_visited_voxel_activated_time=0,而且m_last_visited_time被赋值成为了added_time,所以感觉这里之前的数据都被清空了) | 所以应该是什么是最近访问做定义
+////            if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
+////            {
+////                it = voxels_recent_visited.erase( it );
+////                continue;
+////            }
+////
+////            if ( ( *it )->m_pts_in_grid.size() )
+////            {
+////                double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
+////                // if ( voxel_dis > 30 )
+////                // {
+////                //     it = voxels_recent_visited.erase( it );
+////                //     continue;
+////                // }
+////            }
+////            it++;
+////        }
+////        // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
+////    }
+////
+////    int number_of_voxels_before_add = voxels_recent_visited.size();
+////    int pt_size = pc_in.points.size();
+////    // step = 4;
+////
+////    g_mutex_append_points_process.lock();
+////    KDtree_pt_vector     pt_vec_vec;
+////    std::vector< float > dist_vec;
+////    RGB_voxel_ptr* temp_box_ptr_ptr;
+////
+////    for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
+////    {
+////        int  add = 1;
+////        // m_minimum_pts_size对应的大小为0.05,即对应着grid中的大小划分为0.05(估计是滤波相关操作) | 相当于是把xyz转换是grid的编号
+////        int  grid_x = std::round( pc_in.points[ pt_idx ].x / m_minimum_pts_size );
+////        int  grid_y = std::round( pc_in.points[ pt_idx ].y / m_minimum_pts_size );
+////        int  grid_z = std::round( pc_in.points[ pt_idx ].z / m_minimum_pts_size );
+////        // 将xyz转换成voxel对应的编号
+////        int  box_x = std::round( pc_in.points[ pt_idx ].x / m_voxel_resolution );
+////        int  box_y = std::round( pc_in.points[ pt_idx ].y / m_voxel_resolution );
+////        int  box_z = std::round( pc_in.points[ pt_idx ].z / m_voxel_resolution );
+////        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );  // 查找是否存在数据
+////
+////        // 如果找的到
+////        if ( pt_ptr != nullptr )
+////        {
+////            add = 0;
+////            if ( pts_added_vec != nullptr )
+////            {
+////                pts_added_vec->push_back( *pt_ptr );
+////            }
+////        }
+////
+////        // 查找voxel现在有没有
+////        RGB_voxel_ptr box_ptr;
+////        temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
+////        // 没找到voxel
+////        if ( temp_box_ptr_ptr == nullptr )
+////        {
+////            box_ptr = std::make_shared< RGB_Voxel >( box_x, box_y, box_z );
+////            m_hashmap_voxels.insert( box_x, box_y, box_z, box_ptr );
+////            m_voxel_vec.push_back( box_ptr );
+////        }
+////        else
+////        {
+////            box_ptr = *temp_box_ptr_ptr;
+////        }
+////        // 根据点的位置, 找到对应的voxel位置
+////        voxels_recent_visited.insert( box_ptr );
+////        box_ptr->m_last_visited_time = added_time;
+////
+////        // acc == 0说明这个点已经存在了,不需要再处理
+////        if ( add == 0 )
+////        {
+////            rej++;
+////            continue;
+////        }
+////        if ( disable_append )
+////        {
+////            continue;
+////        }
+////
+////        acc++;
+////        // 新建一个Kdtree中对应的点数据 | 总之就是进行了一个查找(让新点不要与之前的点在同一个grid中) | hash表中保留的数据与KD_tree中保留的数据有一些不一样
+////        KDtree_pt kdtree_pt( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ), 0 );
+////        if ( m_kdtree.Root_Node != nullptr )
+////        {
+////            // 寻找一个最近点，输出的点 + 到这个被查询点 kdtree_pt 的距离值也会被获取到
+////            m_kdtree.Nearest_Search( kdtree_pt, 1, pt_vec_vec, dist_vec );
+////            if ( pt_vec_vec.size() )
+////            {
+////                // 把点放入kD_tree的时候也要考虑点与点之间的距离约束
+////                if ( sqrt( dist_vec[ 0 ] ) < m_minimum_pts_size )
+////                    continue;
+////            }
+////        }
+////
+////        std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
+////        pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
+////        // 直接按照当前点云的size作为下一个点的id
+////        pt_rgb->m_pt_index = m_rgb_pts_vec.size();
+////        kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
+////        m_rgb_pts_vec.push_back( pt_rgb );
+////        m_hashmap_3d_pts.insert( grid_x, grid_y, grid_z, pt_rgb );
+////        if ( box_ptr != nullptr )
+////        {
+////            box_ptr->m_pts_in_grid.push_back( pt_rgb );
+////            // box_ptr->add_pt(pt_rgb);
+////            box_ptr->m_new_added_pts_count++;
+////            box_ptr->m_meshing_times = 0;
+////        }
+////        else
+////        {
+////            scope_color( ANSI_COLOR_RED_BOLD );
+////            for ( int i = 0; i < 100; i++ )
+////            {
+////                cout << "box_ptr is nullptr!!!" << endl;
+////            }
+////        }
+////        // Add to kdtree
+////        m_kdtree.Add_Point( kdtree_pt, false );
+////        if ( pts_added_vec != nullptr )
+////        {
+////            pts_added_vec->push_back( pt_rgb );
+////        }
+////    }
+////    g_mutex_append_points_process.unlock();
+////    // 实际运行中 pts_added_vec的数据一直为nullptr
+//////    if(pts_added_vec != nullptr)
+//////        LOG(INFO) << "[service_reconstruct_mesh] New "<<pts_added_vec->size() <<" points are added in the global map!";
+//////    else
+//////        LOG(INFO) << "[service_reconstruct_mesh] New "<< acc << " points are added in the global map and The pts_added_vec is empty!!";
+////
+////    m_in_appending_pts = 0;
+////    m_mutex_m_box_recent_hitted->lock();
+////    std::swap( m_voxels_recent_visited, voxels_recent_visited );
+////    // m_voxels_recent_visited = voxels_recent_visited ;
+////    m_mutex_m_box_recent_hitted->unlock();
+////
+////    return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
+//
 //    m_in_appending_pts = 1;
 //    Common_tools::Timer tim;
 //    tim.tic();
 //    int acc = 0;
 //    int rej = 0;
-//
-//    // clear的作用只是清空数据,但是不会让其指向一个nullptr的部分
 //    if ( pts_added_vec != nullptr )
 //    {
 //        pts_added_vec->clear();
 //    }
-//    // m_recent_visited_voxel_activated_time感觉恒为0 | 这里的time我感觉是次数的意思
+//
 //    if ( m_recent_visited_voxel_activated_time == 0 )
 //    {
 //        voxels_recent_visited.clear();
 //    }
-//    else
-//    {
-//        // m_mutex_m_box_recent_hitted这个锁就是为了m_voxels_recent_visited而设置出来的锁
-//        m_mutex_m_box_recent_hitted->lock();
-//        // 交换值 ( 时间复杂度为O(1) ) -> 并不是元素之间转换,是这两个vector中指向数据部分的指针直接互换
-//        std::swap( voxels_recent_visited, m_voxels_recent_visited );
-//        m_mutex_m_box_recent_hitted->unlock();
-//
-//        for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
-//        {
-//            // 删除一些之前的数据(因为这里的m_recent_visited_voxel_activated_time=0,而且m_last_visited_time被赋值成为了added_time,所以感觉这里之前的数据都被清空了) | 所以应该是什么是最近访问做定义
-//            if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
-//            {
-//                it = voxels_recent_visited.erase( it );
-//                continue;
-//            }
-//
-//            if ( ( *it )->m_pts_in_grid.size() )
-//            {
-//                double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
-//                // if ( voxel_dis > 30 )
-//                // {
-//                //     it = voxels_recent_visited.erase( it );
-//                //     continue;
-//                // }
-//            }
-//            it++;
-//        }
-//        // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
-//    }
-//
+////    else
+////    {
+////        m_mutex_m_box_recent_hitted->lock();
+////        std::swap( voxels_recent_visited, m_voxels_recent_visited );
+////        m_mutex_m_box_recent_hitted->unlock();
+////        for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
+////        {
+////
+////            if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
+////            {
+////                it = voxels_recent_visited.erase( it );
+////                continue;
+////            }
+////            if ( ( *it )->m_pts_in_grid.size() )
+////            {
+////                double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
+////                // if ( voxel_dis > 30 )
+////                // {
+////                //     it = voxels_recent_visited.erase( it );
+////                //     continue;
+////                // }
+////            }
+////
+////            it++;
+////        }
+////        // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
+////    }
 //    int number_of_voxels_before_add = voxels_recent_visited.size();
 //    int pt_size = pc_in.points.size();
 //    // step = 4;
 //
-//    g_mutex_append_points_process.lock();
 //    KDtree_pt_vector     pt_vec_vec;
 //    std::vector< float > dist_vec;
-//    RGB_voxel_ptr* temp_box_ptr_ptr;
 //
+////    g_mutex_append_map.lock();
+//    RGB_voxel_ptr* temp_box_ptr_ptr;
 //    for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
 //    {
 //        int  add = 1;
-//        // m_minimum_pts_size对应的大小为0.05,即对应着grid中的大小划分为0.05(估计是滤波相关操作) | 相当于是把xyz转换是grid的编号
 //        int  grid_x = std::round( pc_in.points[ pt_idx ].x / m_minimum_pts_size );
 //        int  grid_y = std::round( pc_in.points[ pt_idx ].y / m_minimum_pts_size );
 //        int  grid_z = std::round( pc_in.points[ pt_idx ].z / m_minimum_pts_size );
-//        // 将xyz转换成voxel对应的编号
 //        int  box_x = std::round( pc_in.points[ pt_idx ].x / m_voxel_resolution );
 //        int  box_y = std::round( pc_in.points[ pt_idx ].y / m_voxel_resolution );
 //        int  box_z = std::round( pc_in.points[ pt_idx ].z / m_voxel_resolution );
-//        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );  // 查找是否存在数据
-//
-//        // 如果找的到
+//        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );
 //        if ( pt_ptr != nullptr )
 //        {
 //            add = 0;
@@ -557,10 +714,9 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
 //            }
 //        }
 //
-//        // 查找voxel现在有没有
+//        /// @bug 这里的 box_ptr也会出现 {use count 1811941585 weak count 32762} 这种情况
 //        RGB_voxel_ptr box_ptr;
 //        temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
-//        // 没找到voxel
 //        if ( temp_box_ptr_ptr == nullptr )
 //        {
 //            box_ptr = std::make_shared< RGB_Voxel >( box_x, box_y, box_z );
@@ -571,11 +727,14 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
 //        {
 //            box_ptr = *temp_box_ptr_ptr;
 //        }
-//        // 根据点的位置, 找到对应的voxel位置
+//
+//        if (box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0) {
+//            // 处理异常引用计数情况
+//            return 0 ;
+//        }
+//
 //        voxels_recent_visited.insert( box_ptr );
 //        box_ptr->m_last_visited_time = added_time;
-//
-//        // acc == 0说明这个点已经存在了,不需要再处理
 //        if ( add == 0 )
 //        {
 //            rej++;
@@ -585,28 +744,33 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
 //        {
 //            continue;
 //        }
-//
 //        acc++;
-//        // 新建一个Kdtree中对应的点数据 | 总之就是进行了一个查找(让新点不要与之前的点在同一个grid中) | hash表中保留的数据与KD_tree中保留的数据有一些不一样
 //        KDtree_pt kdtree_pt( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ), 0 );
 //        if ( m_kdtree.Root_Node != nullptr )
 //        {
-//            // 寻找一个最近点，输出的点 + 到这个被查询点 kdtree_pt 的距离值也会被获取到
 //            m_kdtree.Nearest_Search( kdtree_pt, 1, pt_vec_vec, dist_vec );
 //            if ( pt_vec_vec.size() )
 //            {
-//                // 把点放入kD_tree的时候也要考虑点与点之间的距离约束
 //                if ( sqrt( dist_vec[ 0 ] ) < m_minimum_pts_size )
+//                {
 //                    continue;
+//                }
 //            }
 //        }
 //
 //        std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
+//
+//        if(box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0)
+//            return 0;
+//
+////        g_mutex_pts_vector.lock();
 //        pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
-//        // 直接按照当前点云的size作为下一个点的id
 //        pt_rgb->m_pt_index = m_rgb_pts_vec.size();
 //        kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
 //        m_rgb_pts_vec.push_back( pt_rgb );
+////        g_mutex_pts_vector.unlock();
+//
+//
 //        m_hashmap_3d_pts.insert( grid_x, grid_y, grid_z, pt_rgb );
 //        if ( box_ptr != nullptr )
 //        {
@@ -630,178 +794,14 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
 //            pts_added_vec->push_back( pt_rgb );
 //        }
 //    }
-//    g_mutex_append_points_process.unlock();
-//    // 实际运行中 pts_added_vec的数据一直为nullptr
-////    if(pts_added_vec != nullptr)
-////        LOG(INFO) << "[service_reconstruct_mesh] New "<<pts_added_vec->size() <<" points are added in the global map!";
-////    else
-////        LOG(INFO) << "[service_reconstruct_mesh] New "<< acc << " points are added in the global map and The pts_added_vec is empty!!";
+////    g_mutex_append_map.unlock();
 //
 //    m_in_appending_pts = 0;
 //    m_mutex_m_box_recent_hitted->lock();
 //    std::swap( m_voxels_recent_visited, voxels_recent_visited );
 //    // m_voxels_recent_visited = voxels_recent_visited ;
 //    m_mutex_m_box_recent_hitted->unlock();
-//
 //    return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
-
-    m_in_appending_pts = 1;
-    Common_tools::Timer tim;
-    tim.tic();
-    int acc = 0;
-    int rej = 0;
-    if ( pts_added_vec != nullptr )
-    {
-        pts_added_vec->clear();
-    }
-
-    if ( m_recent_visited_voxel_activated_time == 0 )
-    {
-        voxels_recent_visited.clear();
-    }
-//    else
-//    {
-//        m_mutex_m_box_recent_hitted->lock();
-//        std::swap( voxels_recent_visited, m_voxels_recent_visited );
-//        m_mutex_m_box_recent_hitted->unlock();
-//        for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
-//        {
-//
-//            if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
-//            {
-//                it = voxels_recent_visited.erase( it );
-//                continue;
-//            }
-//            if ( ( *it )->m_pts_in_grid.size() )
-//            {
-//                double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
-//                // if ( voxel_dis > 30 )
-//                // {
-//                //     it = voxels_recent_visited.erase( it );
-//                //     continue;
-//                // }
-//            }
-//
-//            it++;
-//        }
-//        // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
-//    }
-    int number_of_voxels_before_add = voxels_recent_visited.size();
-    int pt_size = pc_in.points.size();
-    // step = 4;
-
-    KDtree_pt_vector     pt_vec_vec;
-    std::vector< float > dist_vec;
-
-//    g_mutex_append_map.lock();
-    RGB_voxel_ptr* temp_box_ptr_ptr;
-    for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
-    {
-        int  add = 1;
-        int  grid_x = std::round( pc_in.points[ pt_idx ].x / m_minimum_pts_size );
-        int  grid_y = std::round( pc_in.points[ pt_idx ].y / m_minimum_pts_size );
-        int  grid_z = std::round( pc_in.points[ pt_idx ].z / m_minimum_pts_size );
-        int  box_x = std::round( pc_in.points[ pt_idx ].x / m_voxel_resolution );
-        int  box_y = std::round( pc_in.points[ pt_idx ].y / m_voxel_resolution );
-        int  box_z = std::round( pc_in.points[ pt_idx ].z / m_voxel_resolution );
-        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );
-        if ( pt_ptr != nullptr )
-        {
-            add = 0;
-            if ( pts_added_vec != nullptr )
-            {
-                pts_added_vec->push_back( *pt_ptr );
-            }
-        }
-
-        /// @bug 这里的 box_ptr也会出现 {use count 1811941585 weak count 32762} 这种情况
-        RGB_voxel_ptr box_ptr;
-        temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
-        if ( temp_box_ptr_ptr == nullptr )
-        {
-            box_ptr = std::make_shared< RGB_Voxel >( box_x, box_y, box_z );
-            m_hashmap_voxels.insert( box_x, box_y, box_z, box_ptr );
-            m_voxel_vec.push_back( box_ptr );
-        }
-        else
-        {
-            box_ptr = *temp_box_ptr_ptr;
-        }
-
-        if (box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0) {
-            // 处理异常引用计数情况
-            return 0 ;
-        }
-
-        voxels_recent_visited.insert( box_ptr );
-        box_ptr->m_last_visited_time = added_time;
-        if ( add == 0 )
-        {
-            rej++;
-            continue;
-        }
-        if ( disable_append )
-        {
-            continue;
-        }
-        acc++;
-        KDtree_pt kdtree_pt( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ), 0 );
-        if ( m_kdtree.Root_Node != nullptr )
-        {
-            m_kdtree.Nearest_Search( kdtree_pt, 1, pt_vec_vec, dist_vec );
-            if ( pt_vec_vec.size() )
-            {
-                if ( sqrt( dist_vec[ 0 ] ) < m_minimum_pts_size )
-                {
-                    continue;
-                }
-            }
-        }
-
-        std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
-
-        if(box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0)
-            return 0;
-
-//        g_mutex_pts_vector.lock();
-        pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
-        pt_rgb->m_pt_index = m_rgb_pts_vec.size();
-        kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
-        m_rgb_pts_vec.push_back( pt_rgb );
-//        g_mutex_pts_vector.unlock();
-
-
-        m_hashmap_3d_pts.insert( grid_x, grid_y, grid_z, pt_rgb );
-        if ( box_ptr != nullptr )
-        {
-            box_ptr->m_pts_in_grid.push_back( pt_rgb );
-            // box_ptr->add_pt(pt_rgb);
-            box_ptr->m_new_added_pts_count++;
-            box_ptr->m_meshing_times = 0;
-        }
-        else
-        {
-            scope_color( ANSI_COLOR_RED_BOLD );
-            for ( int i = 0; i < 100; i++ )
-            {
-                cout << "box_ptr is nullptr!!!" << endl;
-            }
-        }
-        // Add to kdtree
-        m_kdtree.Add_Point( kdtree_pt, false );
-        if ( pts_added_vec != nullptr )
-        {
-            pts_added_vec->push_back( pt_rgb );
-        }
-    }
-//    g_mutex_append_map.unlock();
-
-    m_in_appending_pts = 0;
-    m_mutex_m_box_recent_hitted->lock();
-    std::swap( m_voxels_recent_visited, voxels_recent_visited );
-    // m_voxels_recent_visited = voxels_recent_visited ;
-    m_mutex_m_box_recent_hitted->unlock();
-    return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
 
 
 }

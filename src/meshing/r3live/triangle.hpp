@@ -6,7 +6,7 @@
 // class RGB_pts;
 // class RGB_Voxel;
 class Global_map;
-
+extern std::mutex g_mutex_sync_triangle_set;
 
 // 三角形mesh面片的基本结构
 class Triangle
@@ -64,17 +64,19 @@ struct Sync_triangle_set
     bool         m_if_required_synchronized = true;
     Sync_triangle_set() 
     {
-        m_mutex_ptr = std::make_shared<std::mutex>();
+//        m_mutex_ptr = std::make_shared<std::mutex>();
     }
 
     void lock()
     {
-        m_mutex_ptr->lock();
+//        m_mutex_ptr->lock();
+        g_mutex_sync_triangle_set.lock();
     }
 
     void unlock()
     {
-        m_mutex_ptr->unlock();
+//        m_mutex_ptr->unlock();
+        g_mutex_sync_triangle_set.unlock();
     }
 
     void insert( const Triangle_ptr& tri_ptr )
@@ -174,7 +176,16 @@ class Triangle_manager
         m_triangle_hash.m_map_3d_hash_map.reserve( 1e7 );
         m_map_pt_triangle.reserve( 1e7 );
     };
-    ~Triangle_manager() = default;
+    ~Triangle_manager()
+    {
+        // 将new对应的部分进行释放
+        for(auto* ptr : m_triangle_set_vector)
+        {
+            delete ptr;
+        }
+        m_triangle_set_vector.clear();
+        m_triangle_set_in_region.clear();
+    }
 
     vec_3 get_triangle_center( const Triangle_ptr& tri_ptr );
     void  insert_triangle_to_list( const Triangle_ptr& tri_ptr, const int& frame_idx = 0 );
@@ -206,6 +217,7 @@ class Triangle_manager
                 m_map_pt_triangle[ idx[ tri_idx ] ].erase( it3 );
             }
         }
+
         if ( m_enable_map_edge_triangle )
         {
             // printf_line;
@@ -336,104 +348,104 @@ class Triangle_manager
         }
     }
 
-    Triangle_ptr find_triangle( int id_0, int id_1, int id_2 )
-    {
-        int ids[ 3 ];
-        ids[ 0 ] = id_0;
-        ids[ 1 ] = id_1;
-        ids[ 2 ] = id_2;
-        std::sort( std::begin( ids ), std::end( ids ) );
-        if ( m_triangle_hash.if_exist( ids[ 0 ], ids[ 1 ], ids[ 2 ] ) )
-        {
-            // This triangle exist
-            // return m_triangle_hash.m_map_3d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ][ ids[ 2 ] ];
-            return *m_triangle_hash.get_data( ids[ 0 ], ids[ 1 ], ids[ 2 ] );
-        }
-        else
-        {
-            return nullptr;
-        }
-    }
+//    Triangle_ptr find_triangle( int id_0, int id_1, int id_2 )
+//    {
+//        int ids[ 3 ];
+//        ids[ 0 ] = id_0;
+//        ids[ 1 ] = id_1;
+//        ids[ 2 ] = id_2;
+//        std::sort( std::begin( ids ), std::end( ids ) );
+//        if ( m_triangle_hash.if_exist( ids[ 0 ], ids[ 1 ], ids[ 2 ] ) )
+//        {
+//            // This triangle exist
+//            // return m_triangle_hash.m_map_3d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ][ ids[ 2 ] ];
+//            return *m_triangle_hash.get_data( ids[ 0 ], ids[ 1 ], ids[ 2 ] );
+//        }
+//        else
+//        {
+//            return nullptr;
+//        }
+//    }
 
     // 定义一个数组参数, 用于获取颜色信息
-    Triangle_ptr insert_triangle( int id_0, int id_1, int id_2, double color[3][3],  int build_triangle_map = false, const int & frame_idx = 0 )
-    {
-        int ids[ 3 ];
-        ids[ 0 ] = id_0;
-        ids[ 1 ] = id_1;
-        ids[ 2 ] = id_2;
-        std::sort( std::begin( ids ), std::end( ids ) );    // 将三个顶点的出现顺序进行修改 - 这样后续用hash表或者其他操作的时候, 都具有唯一的顺序
-
-        Triangle_ptr triangle_ptr;
-        if ( m_triangle_hash.if_exist( ids[ 0 ], ids[ 1 ], ids[ 2 ] ) )
-        {
-            // This triangle exist
-            // triangle_ptr = m_triangle_hash.m_map_3d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ][ ids[ 2 ] ];
-            triangle_ptr = *m_triangle_hash.get_data( ids[ 0 ], ids[ 1 ], ids[ 2 ] );
-        }
-        else
-        {
-            // This triangle is not exist.
-            // Step 1: new a triangle
-            triangle_ptr = std::make_shared< Triangle >( ids[ 0 ], ids[ 1 ], ids[ 2 ] );
-            triangle_ptr->m_vis_score = 1;
-            m_mutex_triangle_hash.lock();
-            m_triangle_hash.insert( ids[ 0 ], ids[ 1 ], ids[ 2 ], triangle_ptr );
-            m_mutex_triangle_hash.unlock();
-            // return m_map_pt_triangle.size();
-            // return m_triangle_list.size();
-            // return triangle_ptr;
-        }
-
-        // 这里相当于是这个triangle无论存在还是不存在都是都会进行insert | 已经存在的triangle_ptr在这里也会被添加进去(那就更新其颜色信息)
-        m_mutex_triangle_hash.lock();
-        // 给 triangle_ptr 顶点颜色信息
-        for(auto i = 0; i < 3 ;++i)
-        {
-            triangle_ptr->m_tri_pts_color[i][0] = color[i][0];
-            triangle_ptr->m_tri_pts_color[i][1] = color[i][1];
-            triangle_ptr->m_tri_pts_color[i][2] = color[i][2];
-        }
-
-
-        insert_triangle_to_list( triangle_ptr, frame_idx );
-
-        // ins
-        // 这里默认为false - 但是具体的作用应该是进行点以及边到三角形的映射关系
-        if ( build_triangle_map )
-        {
-            // Step 2: add this triangle to points list:
-            m_map_pt_triangle[ ids[ 0 ] ].insert( triangle_ptr );
-            m_map_pt_triangle[ ids[ 1 ] ].insert( triangle_ptr );
-            m_map_pt_triangle[ ids[ 2 ] ].insert( triangle_ptr );
-
-            if ( m_enable_map_edge_triangle )
-            {
-                m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ].insert( triangle_ptr );
-                m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 2 ] ].insert( triangle_ptr );
-                m_map_edge_triangle.m_map_2d_hash_map[ ids[ 1 ] ][ ids[ 2 ] ].insert( triangle_ptr );
-                // Find conflict triangle
-                if ( m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ].size() > 2 )
-                {
-                    m_map_edge_triangle_conflicted.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ] =
-                        m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ];
-                }
-                if ( m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 2 ] ].size() > 2 )
-                {
-                    m_map_edge_triangle_conflicted.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 2 ] ] =
-                        m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 2 ] ];
-                }
-                if ( m_map_edge_triangle.m_map_2d_hash_map[ ids[ 1 ] ][ ids[ 2 ] ].size() > 2 )
-                {
-                    m_map_edge_triangle_conflicted.m_map_2d_hash_map[ ids[ 1 ] ][ ids[ 2 ] ] =
-                        m_map_edge_triangle.m_map_2d_hash_map[ ids[ 1 ] ][ ids[ 2 ] ];
-                }
-            }
-        }
-        m_mutex_triangle_hash.unlock();
-
-        return triangle_ptr;
-    }
+//    Triangle_ptr insert_triangle( int id_0, int id_1, int id_2, double color[3][3],  int build_triangle_map = false, const int & frame_idx = 0 )
+//    {
+//        int ids[ 3 ];
+//        ids[ 0 ] = id_0;
+//        ids[ 1 ] = id_1;
+//        ids[ 2 ] = id_2;
+//        std::sort( std::begin( ids ), std::end( ids ) );    // 将三个顶点的出现顺序进行修改 - 这样后续用hash表或者其他操作的时候, 都具有唯一的顺序
+//
+//        Triangle_ptr triangle_ptr;
+//        if ( m_triangle_hash.if_exist( ids[ 0 ], ids[ 1 ], ids[ 2 ] ) )
+//        {
+//            // This triangle exist
+//            // triangle_ptr = m_triangle_hash.m_map_3d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ][ ids[ 2 ] ];
+//            triangle_ptr = *m_triangle_hash.get_data( ids[ 0 ], ids[ 1 ], ids[ 2 ] );
+//        }
+//        else
+//        {
+//            // This triangle is not exist.
+//            // Step 1: new a triangle
+//            triangle_ptr = std::make_shared< Triangle >( ids[ 0 ], ids[ 1 ], ids[ 2 ] );
+//            triangle_ptr->m_vis_score = 1;
+//            m_mutex_triangle_hash.lock();
+//            m_triangle_hash.insert( ids[ 0 ], ids[ 1 ], ids[ 2 ], triangle_ptr );
+//            m_mutex_triangle_hash.unlock();
+//            // return m_map_pt_triangle.size();
+//            // return m_triangle_list.size();
+//            // return triangle_ptr;
+//        }
+//
+//        // 这里相当于是这个triangle无论存在还是不存在都是都会进行insert | 已经存在的triangle_ptr在这里也会被添加进去(那就更新其颜色信息)
+//        m_mutex_triangle_hash.lock();
+//        // 给 triangle_ptr 顶点颜色信息
+//        for(auto i = 0; i < 3 ;++i)
+//        {
+//            triangle_ptr->m_tri_pts_color[i][0] = color[i][0];
+//            triangle_ptr->m_tri_pts_color[i][1] = color[i][1];
+//            triangle_ptr->m_tri_pts_color[i][2] = color[i][2];
+//        }
+//
+//
+//        insert_triangle_to_list( triangle_ptr, frame_idx );
+//
+//        // ins
+//        // 这里默认为false - 但是具体的作用应该是进行点以及边到三角形的映射关系
+//        if ( build_triangle_map )
+//        {
+//            // Step 2: add this triangle to points list:
+//            m_map_pt_triangle[ ids[ 0 ] ].insert( triangle_ptr );
+//            m_map_pt_triangle[ ids[ 1 ] ].insert( triangle_ptr );
+//            m_map_pt_triangle[ ids[ 2 ] ].insert( triangle_ptr );
+//
+//            if ( m_enable_map_edge_triangle )
+//            {
+//                m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ].insert( triangle_ptr );
+//                m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 2 ] ].insert( triangle_ptr );
+//                m_map_edge_triangle.m_map_2d_hash_map[ ids[ 1 ] ][ ids[ 2 ] ].insert( triangle_ptr );
+//                // Find conflict triangle
+//                if ( m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ].size() > 2 )
+//                {
+//                    m_map_edge_triangle_conflicted.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ] =
+//                        m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ];
+//                }
+//                if ( m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 2 ] ].size() > 2 )
+//                {
+//                    m_map_edge_triangle_conflicted.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 2 ] ] =
+//                        m_map_edge_triangle.m_map_2d_hash_map[ ids[ 0 ] ][ ids[ 2 ] ];
+//                }
+//                if ( m_map_edge_triangle.m_map_2d_hash_map[ ids[ 1 ] ][ ids[ 2 ] ].size() > 2 )
+//                {
+//                    m_map_edge_triangle_conflicted.m_map_2d_hash_map[ ids[ 1 ] ][ ids[ 2 ] ] =
+//                        m_map_edge_triangle.m_map_2d_hash_map[ ids[ 1 ] ][ ids[ 2 ] ];
+//                }
+//            }
+//        }
+//        m_mutex_triangle_hash.unlock();
+//
+//        return triangle_ptr;
+//    }
 
     // 函数重构
     Triangle_ptr insert_triangle( int id_0, int id_1, int id_2, int build_triangle_map = false, const int & frame_idx = 0 )
@@ -449,6 +461,7 @@ class Triangle_manager
         {
             // This triangle exist
             // triangle_ptr = m_triangle_hash.m_map_3d_hash_map[ ids[ 0 ] ][ ids[ 1 ] ][ ids[ 2 ] ];
+//            triangle_ptr = m_triangle_hash.get_data( ids[ 0 ], ids[ 1 ], ids[ 2 ] );
             triangle_ptr = *m_triangle_hash.get_data( ids[ 0 ], ids[ 1 ], ids[ 2 ] );
         }
         else

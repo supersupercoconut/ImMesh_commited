@@ -281,6 +281,8 @@ int main( int argc, char **argv )
     FLAGS_colorlogtostderr = true;
     FLAGS_stderrthreshold = google::INFO;
 
+    config_file = "/home/supercoconut/Myfile/immesh_ws/src/ImMesh/config/avia.yaml";
+
     // Setup window
     pcl::console::setVerbosityLevel( pcl::console::L_ALWAYS );  // 设置pcl的日志级别
 //    Common_tools::printf_software_version();
@@ -595,7 +597,7 @@ int main( int argc, char **argv )
         g_gl_camera.set_gl_camera_pose_matrix();
         g_gl_camera.draw_frame_finish();
     }
-//
+
 //    // Cleanup
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

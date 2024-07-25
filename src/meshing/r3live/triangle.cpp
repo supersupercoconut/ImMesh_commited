@@ -1,6 +1,7 @@
 #include "triangle.hpp"
 #include <glog/logging.h>
 extern std::mutex g_mutex_pts_vector;
+std::mutex g_mutex_sync_triangle_set;
 
 vec_3 Triangle_manager::get_triangle_center(const Triangle_ptr& tri_ptr)
 {
@@ -52,9 +53,6 @@ void Triangle_manager::insert_triangle_to_list( const Triangle_ptr& tri_ptr , co
      *    2. m_triangle_set_vector 用于实际保存 GUI 中使用的数据 | 即保存的是每一个region中的 Sync_triangle_set - 删除数据的时候只需要删除m_triangle_set_in_region中某一个Sync_triangle_set中的某些triangle,
      *       最差的情况也就是 Sync_triangle_set 中没有数据,但是 m_triangle_set_vector中的数据数量不会减少
      * */
-
-    // tri_ptr 本身就包含颜色信息
-
     Sync_triangle_set* sync_triangle_set_ptr = m_triangle_set_in_region.get_data( hash_3d_x, hash_3d_y, hash_3d_z );
     if ( sync_triangle_set_ptr == nullptr )
     {
@@ -89,6 +87,7 @@ void Triangle_manager::erase_triangle_from_list( const Triangle_ptr& tri_ptr , c
     {
         triangle_set_ptr->erase( tri_ptr );
     }
+
 }
 
 int Triangle_manager::get_triangle_list_size()
