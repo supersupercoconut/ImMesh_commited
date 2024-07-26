@@ -454,7 +454,7 @@ std::vector< RGB_pt_ptr > remove_outlier_pts( const std::vector< RGB_pt_ptr > &r
         if ( rgb_pts_vec[ i ]->m_is_inner_pt == 1 )
         {
             // 对于weak_ptr使用lock可以得到shared_ptr 所以可以直接进行比较
-            if ( rgb_pts_vec[ i ]->m_parent_voxel.lock() != voxel_ptr )
+            if ( rgb_pts_vec[ i ]->m_parent_voxel != voxel_ptr )
             {
                 remove_count++;
                 continue;

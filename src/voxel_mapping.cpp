@@ -1786,8 +1786,8 @@ int Voxel_mapping::service_LiDAR_update()
     {
         if ( m_flg_exit )
             break;
-//          ros::spinOnce();
-        read_ros_bag();     // 更换成读取rosbag中的数据
+          ros::spinOnce();
+//        read_ros_bag();     // 更换成读取rosbag中的数据
         std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );     // 延迟时间 —— 要不然mesh比这里满太多了
         /// @bug 这里syn_packages( m_Lidar_Measures )可能会在 回调函数没有执行的时候进入一种死循环中，如果在这里调用其数据就会报错(即最常见的段错误)
         // m_Lidar_Measures中虽然有一个measurement的deque，imu与图像数据被累积起来 | 这里使用的是暂时的数据打包策略 | 因为这里是使用的

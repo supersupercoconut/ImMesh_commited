@@ -1258,7 +1258,7 @@ void Voxel_mapping::readParameters(const std::string& config_file)
     /*** /////////////////// ***/
 
     /*r3live数据集*/
-    m_bag_file = "/home/supercoconut/Myfile/datasets/R3LIVE/hku_campus_seq_00.bag";
+    m_bag_file = "/home/supercoconut/Myfile/datasets/R3LIVE/hku_main_building.bag";
     int width = 1280;
     int height = 1024;
     camera_intrinsic_data = { 863.4241, 0.0, 640.6808,

@@ -114,8 +114,8 @@ class RGB_pts
     
     int   m_is_out_lier_count = 0;
     int                       m_is_inner_pt = 0 ;
-//    RGB_voxel_ptr             m_parent_voxel  = nullptr;
-    w_RGB_voxel_ptr m_parent_voxel  = {};
+    RGB_voxel_ptr             m_parent_voxel  = nullptr;
+//    w_RGB_voxel_ptr m_parent_voxel  = {};
 #if IF_DBG_COLOR
     cv::Scalar m_dbg_color;
 #endif
