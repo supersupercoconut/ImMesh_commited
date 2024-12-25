@@ -1,5 +1,9 @@
 #include "voxel_mapping.hpp"
 #include "pointcloud_rgbd.hpp"
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
+
 
 double g_LiDAR_frame_start_time = 0;
 
@@ -8,7 +12,7 @@ M3D Lidar_R_wrt_IMU = M3D::Identity();
 
 /////////////////////// 补充数据 //////////////////
 //void point_cloud_colored();
-double g_data_id = 0;
+long g_data_id = 0;
 std::unique_ptr<std::thread> g_color_point_thr = nullptr;
 std::unique_ptr<std::thread> g_pub_thr = nullptr;
 int flag = 0;    // 用于直接指定pub线程是不是发布数据
@@ -1637,8 +1641,8 @@ void Voxel_mapping::lio_state_estimation( StatesGroup &state_propagat )
 void Voxel_mapping::init_ros_node()
 {
     m_ros_node_ptr = std::make_shared< ros::NodeHandle >();
-//    read_ros_parameters( *m_ros_node_ptr );
-    readParameters(config_file);
+   read_ros_parameters( *m_ros_node_ptr );
+    // readParameters(config_file);
 
 }
 
@@ -1778,10 +1782,15 @@ int Voxel_mapping::service_LiDAR_update()
 //        g_color_point_thr = std::make_unique<std::thread>(&Voxel_mapping::point_cloud_colored, this);     // unique_ptr 对应的 thread , 不需要delete
 //    }
 
-    m_bag.open(m_bag_file, rosbag::bagmode::Read);
-    m_view = std::make_unique<rosbag::View>(m_bag, rosbag::TopicQuery(m_topics));
-    m_iterator = m_view->begin();
+    // m_bag.open(m_bag_file, rosbag::bagmode::Read);
+    // m_view = std::make_unique<rosbag::View>(m_bag, rosbag::TopicQuery(m_topics));
+    // m_iterator = m_view->begin();
     // 整个lidar数据处理的核心
+
+    std::string pose_filename = "/home/supercoconut/Myfile/mesh/immesh_ws/src/output/poses.txt";
+    std::ofstream pose_file(pose_filename);
+
+
     while ( ( status = ros::ok() ) )
     {
         if ( m_flg_exit )
@@ -2019,10 +2028,48 @@ int Voxel_mapping::service_LiDAR_update()
         // 数据导入
         pcl::PointCloud< pcl::PointXYZI >::Ptr world_lidar_full( new pcl::PointCloud< pcl::PointXYZI > );
 
-        //        cout << m_extR << endl;
-//        cout << m_extT.transpose() <<endl;
+
 
         transformLidar( state.rot_end, state.pos_end, m_feats_undistort, world_lidar_full );
+
+
+        Eigen::Matrix3d rot = state.rot_end*m_extR;
+        Eigen::Vector3d t = state.rot_end*m_extT + state.pos_end;
+
+
+        std::string pcd_filename = "/home/supercoconut/Myfile/mesh/immesh_ws/src/output/"+std::to_string(g_data_id) + ".pcd";
+        pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_xyzi(new pcl::PointCloud<pcl::PointXYZI>);
+
+        cloud_xyzi->points.resize(m_feats_undistort->points.size());
+        for (size_t i = 0; i < m_feats_undistort->points.size(); ++i)
+        {
+            if(m_feats_undistort->points[i].x == state.pos_end[0] && m_feats_undistort->points[i].y == state.pos_end[1] && m_feats_undistort->points[i].z == state.pos_end[2])
+                continue;
+            // 其他情况, 执行
+            cloud_xyzi->points[i].x = m_feats_undistort->points[i].x;
+            cloud_xyzi->points[i].y = m_feats_undistort->points[i].y;
+            cloud_xyzi->points[i].z = m_feats_undistort->points[i].z;
+            cloud_xyzi->points[i].intensity = m_feats_undistort->points[i].intensity;
+        }
+
+        pcl::io::savePCDFileBinary(pcd_filename, *cloud_xyzi);
+
+        // 继续处理 pose的保存
+        if (pose_file.is_open()) {
+//            pose_file << std::fixed << std::setprecision(6);  // 设置浮点数精度
+
+        // 将pose矩阵展平为行向量
+        pose_file << rot(0,0) << " " << rot(0,1) << " " << rot(0,2) << " " << t(0) << " "
+                  << rot(1,0) << " " << rot(1,1) << " " << rot(1,2) << " " << t(1) << " "
+                  << rot(2,0) << " " << rot(2,1) << " " << rot(2,2) << " " << t(2) << endl;
+
+            std::cout << "yes!" << pose_filename << std::endl;
+        } else {
+            std::cerr << "error!" << std::endl;
+        }
+
+
+
 //        LOG(INFO) << "world_lidar_full: " << world_lidar_full->size();
 //        Eigen::Matrix3d i = Eigen::Matrix3d::Identity();
 //        Eigen::Vector3d j;
@@ -2030,13 +2077,13 @@ int Voxel_mapping::service_LiDAR_update()
 //        transformLidar( i, j, m_feats_undistort, world_lidar_full );
 
         // 注意这里保留数据的部分 —— m_Lidar_Measures的measures是一个队列数据(其中直接保留数据) 由于这里使用了ros::spinOnce来控制,所以back()拿到的一定是最新的图像数据(一次同步只会更新一次)
-        if( !world_lidar_full->points.empty() && !m_Lidar_Measures.measures.back().img.empty() )
-        {
-            g_mutex_all_data_package_lock.lock();
-            g_rec_color_data_package_list.emplace_back(world_lidar_full, m_Lidar_Measures.measures.back().img, Eigen::Quaterniond( state.rot_end ), state.pos_end, g_data_id);
-            g_mutex_all_data_package_lock.unlock();
+//        if( !world_lidar_full->points.empty() && !m_Lidar_Measures.measures.back().img.empty() )
+//        {
+//            g_mutex_all_data_package_lock.lock();
+//            g_rec_color_data_package_list.emplace_back(world_lidar_full, m_Lidar_Measures.measures.back().img, Eigen::Quaterniond( state.rot_end ), state.pos_end, g_data_id);
+//            g_mutex_all_data_package_lock.unlock();
             g_data_id++;
-        }
+//        }
 
         auto t_all_end = std::chrono::high_resolution_clock::now();
         auto all_time = std::chrono::duration_cast< std::chrono::duration< double > >( t_all_end - t_all_begin ).count() * 1000;
@@ -2109,26 +2156,27 @@ int Voxel_mapping::service_LiDAR_update()
             // #endif
         }
     }
-    m_bag.close();
+    // m_bag.close();
+    pose_file.close();
     // #endif
     return 0;
 }
 
 
-void Voxel_mapping::laserCloudVoxelHandler(const ImMesh::cloud_voxelConstPtr &msgIn)
-{
-    ImMesh::cloud_voxelPtr temp(new ImMesh::cloud_voxel());
-    temp->header = msgIn->header;
-    temp->cloud_deskewed = msgIn->cloud_deskewed;
-    temp->x = msgIn->x;
-    temp->y = msgIn->y;
-    temp->z = msgIn->z;
-    temp->roll = msgIn->roll;
-    temp->pitch = msgIn->pitch;
-    temp->yaw = msgIn->yaw;
-    temp->covariance = msgIn->covariance;
-    cloud_Buffer.push_back(temp);
-}
+//void Voxel_mapping::laserCloudVoxelHandler(const ImMesh::cloud_voxelConstPtr &msgIn)
+//{
+//    ImMesh::cloud_voxelPtr temp(new ImMesh::cloud_voxel());
+//    temp->header = msgIn->header;
+//    temp->cloud_deskewed = msgIn->cloud_deskewed;
+//    temp->x = msgIn->x;
+//    temp->y = msgIn->y;
+//    temp->z = msgIn->z;
+//    temp->roll = msgIn->roll;
+//    temp->pitch = msgIn->pitch;
+//    temp->yaw = msgIn->yaw;
+//    temp->covariance = msgIn->covariance;
+//    cloud_Buffer.push_back(temp);
+//}
 
 /// @attention 这里是新开启了一个线程进行数据处理 | 并且在实际使用的时候关闭了GUI显示部分(为了关闭GUI 我注释掉了main函数中所有与GUI显示有关的部分，以及全部变量GL_camera g_gl_camera 还注释掉了一个完整的文件 mesh_rec_display.cpp)
 void Voxel_mapping::point_cloud_colored()
@@ -2218,126 +2266,126 @@ void Voxel_mapping::point_cloud_colored()
 
 
 // 接受lvisam的里程计数据 | 不知道为什么在实际使用gui界面经常会出现突然卡死的情况(但是又不知道是在哪里卡死的)
-int Voxel_mapping::service_lvisam_odometry()
-{
-    LOG(INFO) << "Starting the service_lvisam_odometry thread";
-    ros::Subscriber subCloudVoxel = m_ros_node_ptr->subscribe<ImMesh::cloud_voxel>( "/lvi_sam/lidar/voxel/cloud_voxel", 1000, &Voxel_mapping::laserCloudVoxelHandler, this);
-//     ros::Subscriber sub_imu = m_ros_node_ptr->subscribe( m_imu_topic, 200000, &Voxel_mapping::imu_cbk, this );
-//     ros::Subscriber sub_img = m_ros_node_ptr->subscribe(m_img_topic, 200000, img_cbk);
-    ros::Publisher pubLaserCloudFullRes = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_registered", 100 );
-    ros::Publisher pubLaserCloudVoxel = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_voxel", 100 );
-    ros::Publisher pubVisualCloud = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_visual_map", 100 );
-    ros::Publisher pubSubVisualCloud = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_visual_sub_map", 100 );
-    ros::Publisher pubLaserCloudEffect = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_effected", 100 );
-    ros::Publisher pubLaserCloudMap = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/Laser_map", 100 );
-    ros::Publisher pubOdomAftMapped = m_ros_node_ptr->advertise< nav_msgs::Odometry >( "/aft_mapped_to_init", 10 );
-    ros::Publisher pubPath = m_ros_node_ptr->advertise< nav_msgs::Path >( "/path", 10 );
-    ros::Publisher plane_pub = m_ros_node_ptr->advertise< visualization_msgs::Marker >( "/planner_normal", 1 );
-    ros::Publisher voxel_pub = m_ros_node_ptr->advertise< visualization_msgs::MarkerArray >( "/voxels", 1 );
-
-    m_pub_path.header.stamp = ros::Time::now();
-    m_pub_path.header.frame_id = "odom";
-
-    FILE *fp_kitti;
-    // string kitti_log_dir = "/home/zivlin/temp/FAST-LIO-Voxelmap//Log/"
-    //                        "kitti_log_voxelmap.txt";
-    string kitti_log_dir = std::string( ROOT_DIR ).append( "/Log/kitti_log_voxelmap.txt" );
-    fp_kitti = fopen( kitti_log_dir.c_str(), "w" );
-
-    int    effect_feat_num = 0, frame_num = 0;
-    double deltaT, deltaR, aver_time_consu = 0, aver_time_icp = 0, aver_time_match = 0, aver_time_solve = 0, aver_time_const_H_time = 0;
-    FOV_DEG = ( m_fov_deg + 10.0 ) > 179.9 ? 179.9 : ( m_fov_deg + 10.0 );
-    HALF_FOV_COS = cos( ( FOV_DEG ) *0.5 * PI_M / 180.0 );
-    m_downSizeFilterSurf.setLeafSize( m_filter_size_surf_min, m_filter_size_surf_min, m_filter_size_surf_min );
-    ros::Rate rate( 5000 );
-
-    FILE * fp;
-    string pos_log_dir = m_root_dir + "/Log/pos_log.txt";
-    fp = fopen( pos_log_dir.c_str(), "w" );
-    m_fout_img_pos.open( string( string( ROOT_DIR ) + "PCD/img_pos.json" ), ios::out );
-    m_fout_pcd_pos.open( string( string( ROOT_DIR ) + "PCD/scans_pos.json" ), ios::out );
-    m_fout_pre.open( DEBUG_FILE_DIR( "mat_pre.txt" ), ios::out );
-    m_fout_out.open( DEBUG_FILE_DIR( "mat_out.txt" ), ios::out );
-    m_fout_dbg.open( DEBUG_FILE_DIR( "dbg.txt" ), ios::out );
-
-    while(ros::ok())
-    {
-        ros::spinOnce();
-        int count = 0;
-        if(!cloud_Buffer.empty())
-        {
-            auto temp = cloud_Buffer.front();
-//            LOG(INFO) << "The "<< count++ << "point_cloud to be processed";
-            if(!m_is_first_frame)
-            {
-                m_first_lidar_time = temp->header.stamp.toSec();
-                m_is_first_frame = true;
-                LOG(INFO) << "FIRST LIDAR FRAME!";
-            }
-
-            double t0, t1, t2, t3, t4, t5, match_start, solve_start, svd_time;
-            m_match_time = m_kdtree_search_time = m_kdtree_search_counter = m_solve_time = m_solve_const_H_time = svd_time = 0;
-            t0 = omp_get_wtime();
-            g_LiDAR_frame_start_time = t0;
-            auto t_all_begin = std::chrono::high_resolution_clock::now();
-
-            // 读取数据
-            pcl::fromROSMsg(temp->cloud_deskewed, *m_feats_undistort);
-            if ( m_feats_undistort->empty() || ( m_feats_undistort == nullptr ) )
-            {
-                LOG(ERROR) << "No points";
-                continue;
-            }
-            // 获取位姿信息(其余部分不会使用协方差数据 所以只需要将对应的位姿信息输入到state中即可)
-            Eigen::Affine3f tmp = pcl::getTransformation(temp->x, temp->y, temp->z, temp->roll, temp->pitch, temp->yaw);
-            Eigen::Affine3d transCur = tmp.cast<double>();
-
-            state.pos_end = transCur.translation();
-            state.rot_end = transCur.rotation();
-
-            if(m_lidar_en)
-            {
-                m_euler_cur(0,0) = temp->roll;
-                m_euler_cur(0,1) = temp->pitch;
-                m_euler_cur(0,2) = temp->yaw;
-//                LOG(INFO) << m_euler_cur(0,0) << " " << m_euler_cur(0,1) << " " << m_euler_cur(0,2);
-            }
-
-            m_downSizeFilterSurf.setInputCloud( m_feats_undistort );
-            m_downSizeFilterSurf.filter( *m_feats_down_body );
-            m_feats_down_size = m_feats_down_body->points.size();
-//            LOG(INFO) << "Downsampled size: " << m_feats_down_size;
-
-            if ( m_use_new_map )
-            {
-                if ( !m_init_map )
-                {
-                    // 进行voxelmap的建立 —— 这里没有使用将采样的点云数据 使用的是去畸变数据
-                    m_init_map = voxel_map_init();
-                    if ( m_is_pub_plane_map )
-                        pubPlaneMap( m_feat_map, voxel_pub, state.pos_end );
-                    frame_num++;
-                    LOG(INFO)<<"Build the voxelMap";
-                    continue;
-                }
-            }
-
-            if ( m_lidar_en )
-                map_incremental();
-//               map_incremental_grow();
-            if ( m_is_pub_plane_map )
-                pubPlaneMap( m_feat_map, voxel_pub, state.pos_end );
-            t2 = omp_get_wtime();
-
-            frame_num++;
-            cloud_Buffer.pop_front();
-        }
-
-        rate.sleep();
-    }
-
-    return 0;
-}
+//int Voxel_mapping::service_lvisam_odometry()
+//{
+//    LOG(INFO) << "Starting the service_lvisam_odometry thread";
+////    ros::Subscriber subCloudVoxel = m_ros_node_ptr->subscribe<ImMesh::cloud_voxel>( "/lvi_sam/lidar/voxel/cloud_voxel", 1000, &Voxel_mapping::laserCloudVoxelHandler, this);
+////     ros::Subscriber sub_imu = m_ros_node_ptr->subscribe( m_imu_topic, 200000, &Voxel_mapping::imu_cbk, this );
+////     ros::Subscriber sub_img = m_ros_node_ptr->subscribe(m_img_topic, 200000, img_cbk);
+//    ros::Publisher pubLaserCloudFullRes = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_registered", 100 );
+//    ros::Publisher pubLaserCloudVoxel = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_voxel", 100 );
+//    ros::Publisher pubVisualCloud = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_visual_map", 100 );
+//    ros::Publisher pubSubVisualCloud = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_visual_sub_map", 100 );
+//    ros::Publisher pubLaserCloudEffect = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/cloud_effected", 100 );
+//    ros::Publisher pubLaserCloudMap = m_ros_node_ptr->advertise< sensor_msgs::PointCloud2 >( "/Laser_map", 100 );
+//    ros::Publisher pubOdomAftMapped = m_ros_node_ptr->advertise< nav_msgs::Odometry >( "/aft_mapped_to_init", 10 );
+//    ros::Publisher pubPath = m_ros_node_ptr->advertise< nav_msgs::Path >( "/path", 10 );
+//    ros::Publisher plane_pub = m_ros_node_ptr->advertise< visualization_msgs::Marker >( "/planner_normal", 1 );
+//    ros::Publisher voxel_pub = m_ros_node_ptr->advertise< visualization_msgs::MarkerArray >( "/voxels", 1 );
+//
+//    m_pub_path.header.stamp = ros::Time::now();
+//    m_pub_path.header.frame_id = "odom";
+//
+//    FILE *fp_kitti;
+//    // string kitti_log_dir = "/home/zivlin/temp/FAST-LIO-Voxelmap//Log/"
+//    //                        "kitti_log_voxelmap.txt";
+//    string kitti_log_dir = std::string( ROOT_DIR ).append( "/Log/kitti_log_voxelmap.txt" );
+//    fp_kitti = fopen( kitti_log_dir.c_str(), "w" );
+//
+//    int    effect_feat_num = 0, frame_num = 0;
+//    double deltaT, deltaR, aver_time_consu = 0, aver_time_icp = 0, aver_time_match = 0, aver_time_solve = 0, aver_time_const_H_time = 0;
+//    FOV_DEG = ( m_fov_deg + 10.0 ) > 179.9 ? 179.9 : ( m_fov_deg + 10.0 );
+//    HALF_FOV_COS = cos( ( FOV_DEG ) *0.5 * PI_M / 180.0 );
+//    m_downSizeFilterSurf.setLeafSize( m_filter_size_surf_min, m_filter_size_surf_min, m_filter_size_surf_min );
+//    ros::Rate rate( 5000 );
+//
+//    FILE * fp;
+//    string pos_log_dir = m_root_dir + "/Log/pos_log.txt";
+//    fp = fopen( pos_log_dir.c_str(), "w" );
+//    m_fout_img_pos.open( string( string( ROOT_DIR ) + "PCD/img_pos.json" ), ios::out );
+//    m_fout_pcd_pos.open( string( string( ROOT_DIR ) + "PCD/scans_pos.json" ), ios::out );
+//    m_fout_pre.open( DEBUG_FILE_DIR( "mat_pre.txt" ), ios::out );
+//    m_fout_out.open( DEBUG_FILE_DIR( "mat_out.txt" ), ios::out );
+//    m_fout_dbg.open( DEBUG_FILE_DIR( "dbg.txt" ), ios::out );
+//
+//    while(ros::ok())
+//    {
+//        ros::spinOnce();
+//        int count = 0;
+//        if(!cloud_Buffer.empty())
+//        {
+//            auto temp = cloud_Buffer.front();
+////            LOG(INFO) << "The "<< count++ << "point_cloud to be processed";
+//            if(!m_is_first_frame)
+//            {
+//                m_first_lidar_time = temp->header.stamp.toSec();
+//                m_is_first_frame = true;
+//                LOG(INFO) << "FIRST LIDAR FRAME!";
+//            }
+//
+//            double t0, t1, t2, t3, t4, t5, match_start, solve_start, svd_time;
+//            m_match_time = m_kdtree_search_time = m_kdtree_search_counter = m_solve_time = m_solve_const_H_time = svd_time = 0;
+//            t0 = omp_get_wtime();
+//            g_LiDAR_frame_start_time = t0;
+//            auto t_all_begin = std::chrono::high_resolution_clock::now();
+//
+//            // 读取数据
+//            pcl::fromROSMsg(temp->cloud_deskewed, *m_feats_undistort);
+//            if ( m_feats_undistort->empty() || ( m_feats_undistort == nullptr ) )
+//            {
+//                LOG(ERROR) << "No points";
+//                continue;
+//            }
+//            // 获取位姿信息(其余部分不会使用协方差数据 所以只需要将对应的位姿信息输入到state中即可)
+//            Eigen::Affine3f tmp = pcl::getTransformation(temp->x, temp->y, temp->z, temp->roll, temp->pitch, temp->yaw);
+//            Eigen::Affine3d transCur = tmp.cast<double>();
+//
+//            state.pos_end = transCur.translation();
+//            state.rot_end = transCur.rotation();
+//
+//            if(m_lidar_en)
+//            {
+//                m_euler_cur(0,0) = temp->roll;
+//                m_euler_cur(0,1) = temp->pitch;
+//                m_euler_cur(0,2) = temp->yaw;
+////                LOG(INFO) << m_euler_cur(0,0) << " " << m_euler_cur(0,1) << " " << m_euler_cur(0,2);
+//            }
+//
+//            m_downSizeFilterSurf.setInputCloud( m_feats_undistort );
+//            m_downSizeFilterSurf.filter( *m_feats_down_body );
+//            m_feats_down_size = m_feats_down_body->points.size();
+////            LOG(INFO) << "Downsampled size: " << m_feats_down_size;
+//
+//            if ( m_use_new_map )
+//            {
+//                if ( !m_init_map )
+//                {
+//                    // 进行voxelmap的建立 —— 这里没有使用将采样的点云数据 使用的是去畸变数据
+//                    m_init_map = voxel_map_init();
+//                    if ( m_is_pub_plane_map )
+//                        pubPlaneMap( m_feat_map, voxel_pub, state.pos_end );
+//                    frame_num++;
+//                    LOG(INFO)<<"Build the voxelMap";
+//                    continue;
+//                }
+//            }
+//
+//            if ( m_lidar_en )
+//                map_incremental();
+////               map_incremental_grow();
+//            if ( m_is_pub_plane_map )
+//                pubPlaneMap( m_feat_map, voxel_pub, state.pos_end );
+//            t2 = omp_get_wtime();
+//
+//            frame_num++;
+//            cloud_Buffer.pop_front();
+//        }
+//
+//        rate.sleep();
+//    }
+//
+//    return 0;
+//}
 
 
 

@@ -16,7 +16,7 @@
 #include "ikd-Tree/ikd_Tree.h"
 #include "voxel_loc.hpp"
 #include <glog/logging.h>
-#include <ImMesh/cloud_voxel.h>
+//#include <ImMesh/cloud_voxel.h>
 #include "pointcloud_rgbd.hpp"
 #include <functional>
 
@@ -306,7 +306,7 @@ class Voxel_mapping
     Eigen::Matrix3d g_cam_k;
     deque< cv::Mat > m_img_buffer;
     deque< double > m_img_time_buffer;
-    deque< ImMesh::cloud_voxelPtr > cloud_Buffer;
+//    deque< ImMesh::cloud_voxelPtr > cloud_Buffer;
 
     cv::Mat m_img;
     cv::Mat m_img_gray;
@@ -456,7 +456,7 @@ class Voxel_mapping
 
     ////////////////////////////////////////////// 新使用函数 //////////////////////////////////////////////
     void readParameters(const std::string& config_file);
-    void laserCloudVoxelHandler(const ImMesh::cloud_voxelConstPtr &msgIn);
+//    void laserCloudVoxelHandler(const ImMesh::cloud_voxelConstPtr &msgIn);
     int service_lvisam_odometry();
     void map_incremental();
 

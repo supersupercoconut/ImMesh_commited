@@ -218,7 +218,7 @@ void display_current_LiDAR_pts( int current_frame_idx, double pts_size, vec_4f c
     // 通过修改
     g_LiDAR_point_shader.set_point_attr( pts_size );
 //    {
-        std::shared_lock lock(g_mutex_eigen_vec_vec);
+//        std::shared_lock lock(g_mutex_eigen_vec_vec);
         g_LiDAR_point_shader.set_pointcloud( g_eigen_vec_vec[ current_frame_idx ].first, vec_3( 1.0, 1.0, 1.0 ) );
 //    }
 
@@ -264,7 +264,7 @@ void synchronize_triangle_list_for_disp()
 {
     int region_size = g_triangles_manager.m_triangle_set_vector.size();
     bool if_force_refresh = g_force_refresh_triangle;
-    std::lock_guard<std::mutex> lock(g_region_triangle_shader_mutex);
+//    std::lock_guard<std::mutex> lock(g_region_triangle_shader_mutex);
     for ( int region_idx = 0; region_idx < region_size; region_idx++ )
     {
         // 这里虽然说是 Sync_triangle_set 但其实际对应的是一个region中所有triangle数据
@@ -322,7 +322,7 @@ void service_refresh_and_synchronize_triangle( double sleep_time )
 void draw_triangle( const Cam_view &gl_cam )
 {
     int region_size = g_region_triangles_shader_vec.size();
-    std::lock_guard<std::mutex> lock(g_region_triangle_shader_mutex);
+//    std::lock_guard<std::mutex> lock(g_region_triangle_shader_mutex);
     for ( int region_idx = 0; region_idx < region_size; region_idx++ )
     {
         /// @attention 全局变量又不上锁...
@@ -348,7 +348,7 @@ void display_camera_traj( float display_size )
 
 void draw_camera_pose( int current_frame_idx, float pt_disp_size, float display_cam_size )
 {
-    std::shared_lock lock(g_mutex_eigen_vec_vec);
+//    std::shared_lock lock(g_mutex_eigen_vec_vec);
     Eigen::Quaterniond pose_q( g_eigen_vec_vec[ current_frame_idx ].second.head< 4 >() );
     vec_3              pose_t = g_eigen_vec_vec[ current_frame_idx ].second.block( 4, 0, 3, 1 );
     mat_3_3            lidar_frame_to_camera_frame;
@@ -370,7 +370,7 @@ void draw_camera_trajectory( int current_frame_idx, float pt_disp_size )
 {
     pt_camera_traj.clear();
 
-    std::shared_lock lock(g_mutex_eigen_vec_vec);
+//    std::shared_lock lock(g_mutex_eigen_vec_vec);
     for ( int i = 0; i < current_frame_idx; i++ )
     {
         if ( g_eigen_vec_vec[ i ].second.size() >= 7 )

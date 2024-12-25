@@ -81,6 +81,20 @@ namespace{
 }
 
 std::ofstream file("reconstruction.txt", std::ios::app);
+
+
+// 输入图像信息 + 位姿信息
+void rendering_in_voxels(cv::Mat img, Eigen::Quaterniond pose_q, Eigen::Vector3d pose_t)
+{
+    if(img.empty())
+    {
+        LOG(INFO) << "Without image data !!!";
+        return;
+    }
+}
+
+
+
 // 函数重载 - 使用所有数据的mesh重建函数 - 包含点云渲染以及mesh重建
 void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr frame_pts, cv::Mat img, Eigen::Quaterniond pose_q, Eigen::Vector3d pose_t, int frame_idx )
 {
@@ -105,14 +119,14 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     pose_vec.head< 4 >() = pose_q.coeffs().transpose();
     pose_vec.block( 4, 0, 3, 1 ) = pose_t;
 
-    std::unique_lock lock(g_mutex_eigen_vec_vec);
+//    std::unique_lock lock(g_mutex_eigen_vec_vec);
     for ( int i = 0; i < frame_pts->points.size(); i++ )
     {
         g_eigen_vec_vec[ frame_idx ].first.emplace_back( frame_pts->points[ i ].x, frame_pts->points[ i ].y, frame_pts->points[ i ].z,
-                                                         frame_pts->points[ i ].intensity );
+                                                             frame_pts->points[ i ].intensity );
     }
     g_eigen_vec_vec[ frame_idx ].second = pose_vec;
-    lock.unlock();
+//    lock.unlock();
 
 
     int append_point_step = std::max( ( int ) 1, ( int ) std::round( frame_pts->points.size() / appending_pts_frame ) );
@@ -288,9 +302,9 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     g_map_rgb_pts_mesh.m_voxels_recent_visited = voxels_recent_visited;
     g_map_rgb_pts_mesh.m_mutex_m_box_recent_hitted->unlock();
     double time_a = tim_append.toc();
-    tim_render.tic();
-//    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the append_points_to_global_map ";
 
+
+    tim_render.tic();
     /*** 位姿变换 ***/
     Eigen::Matrix3d rot_i2w = pose_q.toRotationMatrix();
     Eigen::Vector3d pos_i2w = pose_t;
@@ -304,7 +318,6 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
     std::shared_ptr<Image_frame> image_pose = std::make_shared<Image_frame>(cam_k);
     image_pose->set_pose(eigen_q(R_w2c), t_w2c);
     image_pose->m_img = img;
-//        LOG(INFO) << "image_pose->m_img.rows" << image_pose->m_img.rows;
     image_pose->m_timestamp = ros::Time::now().toSec();
     image_pose->init_cubic_interpolation();
     image_pose->image_equalize();
@@ -483,17 +496,17 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             //for ( auto p : inner_pts_index )
            // {
             //    if ( voxel->if_pts_belong_to_this_voxel( g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ] ) )
-                {
+//                {
              //       g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ]->m_is_inner_pt = true;
               //      g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ]->m_parent_voxel = voxel;
-                }
+//                }
            // }
             // 是不是convex_hull_index中的点的作用不 这里给一个false之后就不用管了
            // for ( auto p : convex_hull_index )
-            {
+//            {
           //      g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ]->m_is_inner_pt = false;
             //    g_map_rgb_pts_mesh.m_rgb_pts_vec[ p ]->m_parent_voxel = voxel;
-            }
+//            }
 
             // 原代码中上锁上的总感觉位置不是很正确, 这里多移动一部分, 一直移动到 包含所有使用g_rgb_pt_mesh中的点云地图的部分
 //          //   g_mutex_append_map.unlock();
@@ -510,13 +523,13 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
             for ( auto triangle_ptr : triangles_to_add )
             {
                 // 使用g_eigen_vec_vec的位姿信息 - 即对应了在GUI做展示的时候 实际运行出来的实际 camera 的位姿信息 | 短轴部分对应的应该是2D投影平面上的法向量
-                std::shared_lock lock(g_mutex_eigen_vec_vec);
+//                std::shared_lock lock(g_mutex_eigen_vec_vec);
                 correct_triangle_index( triangle_ptr, g_eigen_vec_vec[ frame_idx ].second.block( 4, 0, 3, 1 ), voxel->m_short_axis );
             }
 
             for ( auto triangle_ptr : existing_triangle )
             {
-                std::shared_lock lock(g_mutex_eigen_vec_vec);
+//                std::shared_lock lock(g_mutex_eigen_vec_vec);
                 correct_triangle_index( triangle_ptr, g_eigen_vec_vec[ frame_idx ].second.block( 4, 0, 3, 1 ), voxel->m_short_axis );
             }
             std::unique_lock< std::mutex > lock( mtx_triangle_lock );   // 对removed_triangle_list以及added_triangle_list进行上锁 保证tbb执行的时候不会出现同时读写问题
@@ -559,7 +572,7 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
         // 相当于是单独处理每一个voxel中的triangle数据
         for ( auto triangle_ptr : triangle_idx )
         {
-            double tmp_color[3][3] = {0};
+            // double tmp_color[3][3] = {0};
             // 补充生成三角顶点颜色 | j代表是第几个顶点
 //            for(auto j = 0; j < 3; ++j)
 //            {
@@ -578,8 +591,12 @@ void incremental_mesh_reconstruction( pcl::PointCloud< pcl::PointXYZI >::Ptr fra
 //    LOG(INFO) << "[frame_idx]:" << frame_idx <<" Finish the mesh_reconstruction || cost time: " << tim_total.toc_string("mesh_reconstruction");
     g_mutex_reconstruct_mesh.unlock();
     double time_c = tim_mesh.toc();
-    double time_total = time_a + time_b + time_c;
-    LOG(INFO) << "frame_idx: " << frame_idx << " | appending_time: " << time_a << " | " << time_b << " | " << time_c << " | " << time_total;
+//    double time_total = time_a + time_b + time_c;
+//    LOG(INFO) << "frame_idx: " << frame_idx << " | appending_time: " << time_a << " | " << time_b << " | " << time_c << " | " << time_total;
+    double time_total = time_a  + time_c;
+    LOG(INFO) << "frame_idx: " << frame_idx << " | " << time_a <<  " | " << time_c << " | " << time_total;
+
+
 
 //    if ( g_fp_cost_time )
 //    {
@@ -917,6 +934,10 @@ void service_reconstruct_mesh()
                                                     data_pack_front.m_pose_q,
                                                     data_pack_front.m_pose_t,
                                                     data_pack_front.m_frame_idx);
+
+                    // 不知道是不是渲染线程导致量整体的运行速度下降 | 这里既然线程池不会出现问题, 后续直接使用线程池做rendering部分
+
+
                 });
 
 //                if (file.is_open()) {
@@ -935,7 +956,7 @@ void service_reconstruct_mesh()
 
             }
         //
-        std::this_thread::sleep_for( std::chrono::microseconds( 50 ) );
+        std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
     }
     file.close();
 }
@@ -1022,7 +1043,7 @@ std::vector< vec_4 > convert_pcl_pointcloud_to_vec( pcl::PointCloud< pcl::PointX
 
 void Voxel_mapping::map_incremental_grow()
 {
-    start_mesh_threads( m_meshing_maximum_thread_for_rec_mesh );
+//    start_mesh_threads( m_meshing_maximum_thread_for_rec_mesh );
     if ( m_use_new_map )
     {
         while ( g_flag_pause )

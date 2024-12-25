@@ -462,14 +462,28 @@ int img_rej = 0;
 /* 只接收图像与lidar数据,并且在图像都是在lidar数据后面的*/
 bool Voxel_mapping::sync_packages( LidarMeasureGroup &meas )
 {
-    /* imu + lidar + camera 传感器下的数据集打包策略 */
-    if ( m_lidar_buffer.empty() || m_imu_buffer.empty() || m_img_buffer.empty() )
+
+    if ( !m_imu_en )
     {
-//        LOG(INFO) << " lidar buffer or img buffer or imu buffer is empty ! " ;
+        if ( !m_lidar_buffer.empty() )
+        {
+            meas.lidar = m_lidar_buffer.front();
+            meas.lidar_beg_time = m_time_buffer.front();
+            m_lidar_buffer.pop_front();
+            m_time_buffer.pop_front();
+            return true;
+        }
+
         return false;
     }
 
-    // 打包lidar数据 - 先将lidar数据提取出来
+    if ( m_lidar_buffer.empty() || m_imu_buffer.empty() )
+    {
+        return false;
+    }
+
+    // 使用lidar并且 imu与lidar的buffer都不为空
+    /*** push a lidar scan ***/
     if ( !m_lidar_pushed )
     {
         meas.lidar = m_lidar_buffer.front();
@@ -483,74 +497,136 @@ bool Voxel_mapping::sync_packages( LidarMeasureGroup &meas )
         m_lidar_pushed = true;
     }
 
-
     // m_last_timestamp_imu对应的是最后一帧imu数据的时间戳 | m_lidar_end_time对应的部分是一帧点云(加上其开始部分)最后对应的时间部分
+    // 前面的部分已经完成了lidar数据的保存 -> 可以等待imu数据补充
+    if ( m_last_timestamp_imu < m_lidar_end_time )
+    {
+        return false;
+    }
+
+    /*** push imu data, and pop from imu buffer ***/
+    // no imu topic, means only has lidar topic
     if ( m_imu_en && m_last_timestamp_imu < m_lidar_end_time )
-    {
+    { // imu message needs to be larger than lidar_end_time, keep complete propagate.
+        // ROS_ERROR("out sync");
         return false;
     }
 
-    // 管理image | 小于lidar时间, 清空所有数据 | 图像buffer里面不包含时间信息
-    if(m_last_timestamp_img < m_time_buffer.front())
+    struct MeasureGroup m; // standard method to keep imu message
+    if ( !m_imu_buffer.empty() )
     {
-        m_img_buffer.clear();
-        m_img_time_buffer.clear();  // 时间戳与图像一起处理
-//        LOG(INFO) << "clear buffer";
-        return false;
-    }
-    else
-    {
-        // 上面只是判断最后一帧图像，这里可能有多个图像在 m_img_buffer
-        while( !m_img_time_buffer.empty())
+        double imu_time = m_imu_buffer.front()->header.stamp.toSec();
+        m.imu.clear();
+        m_mutex_buffer.lock();
+        while ( ( !m_imu_buffer.empty() && ( imu_time < m_lidar_end_time ) ) )
         {
-            auto i = m_img_time_buffer.front();
-            // 之前的数据情况
-            if( i < m_time_buffer.front())
-            {
-                img_rej++;
-                m_img_buffer.pop_front();
-                m_img_time_buffer.pop_front();
-//                LOG(INFO) << "pop front from buffer";
-                continue;
-            }
-            else
-            {
-                // 组装LidarMeasurement
-                struct MeasureGroup m;
-                m.img = m_img_buffer.front();
-
-                double imu_time = m_imu_buffer.front()->header.stamp.toSec();
-                m.imu.clear();
-
-                while ( ( !m_imu_buffer.empty() && ( imu_time < m_lidar_end_time ) ) )
-                {
-                    imu_time = m_imu_buffer.front()->header.stamp.toSec();
-                    if ( imu_time > m_lidar_end_time )
-                        break;
-                    m.imu.push_back( m_imu_buffer.front() );
-                    m_imu_buffer.pop_front();
-                }
-
-                // 只有所有的部分都完成了,才会继续进行处理
-                m_lidar_pushed = false;
-                m_lidar_buffer.pop_front();
-                m_time_buffer.pop_front();
-                m_img_buffer.pop_front();
-                m_img_time_buffer.pop_front();
-
-                m_sig_buffer.notify_all();
-
-                meas.is_lidar_end = true; // process lidar topic, so timestamp should be lidar scan end.
-                meas.measures.push_back( m );
-//                cv::imshow("dfew", meas.measures.back().img);
-//                cv::waitKey(0);
-//                LOG(INFO) << "meas.measures.size(): " << meas.measures.size();
-//                LOG(INFO) << "Finish sync measurement and the number of rejected image is"<< img_rej;
-                return true;
-            }
+            imu_time = m_imu_buffer.front()->header.stamp.toSec();
+            if ( imu_time > m_lidar_end_time )
+                break;
+            m.imu.push_back( m_imu_buffer.front() );
+            m_imu_buffer.pop_front();
         }
-        return false;
     }
+
+    m_lidar_buffer.pop_front();
+    m_time_buffer.pop_front();
+    m_mutex_buffer.unlock();
+    m_sig_buffer.notify_all();
+    m_lidar_pushed = false;   // sync one whole lidar scan.
+    meas.is_lidar_end = true; // process lidar topic, so timestamp should be lidar scan end.
+    meas.measures.push_back( m );
+
+    return true;
+
+//    /* imu + lidar + camera 传感器下的数据集打包策略 */
+//    if ( m_lidar_buffer.empty() || m_imu_buffer.empty() || m_img_buffer.empty() )
+//    {
+////        LOG(INFO) << " lidar buffer or img buffer or imu buffer is empty ! " ;
+//        return false;
+//    }
+//
+//    // 打包lidar数据 - 先将lidar数据提取出来
+//    if ( !m_lidar_pushed )
+//    {
+//        meas.lidar = m_lidar_buffer.front();
+//        if ( meas.lidar->points.size() <= 1 )
+//        {
+//            m_lidar_buffer.pop_front();
+//            return false;
+//        }
+//        meas.lidar_beg_time = m_time_buffer.front();
+//        m_lidar_end_time = meas.lidar_beg_time + meas.lidar->points.back().curvature / double( 1000 );
+//        m_lidar_pushed = true;
+//    }
+//
+//
+//    // m_last_timestamp_imu对应的是最后一帧imu数据的时间戳 | m_lidar_end_time对应的部分是一帧点云(加上其开始部分)最后对应的时间部分
+//    if ( m_imu_en && m_last_timestamp_imu < m_lidar_end_time )
+//    {
+//        return false;
+//    }
+//
+//    // 管理image | 小于lidar时间, 清空所有数据 | 图像buffer里面不包含时间信息
+//    if(m_last_timestamp_img < m_time_buffer.front())
+//    {
+//        m_img_buffer.clear();
+//        m_img_time_buffer.clear();  // 时间戳与图像一起处理
+////        LOG(INFO) << "clear buffer";
+//        return false;
+//    }
+//    else
+//    {
+//        // 上面只是判断最后一帧图像，这里可能有多个图像在 m_img_buffer
+//        while( !m_img_time_buffer.empty())
+//        {
+//            auto i = m_img_time_buffer.front();
+//            // 之前的数据情况
+//            if( i < m_time_buffer.front())
+//            {
+//                img_rej++;
+//                m_img_buffer.pop_front();
+//                m_img_time_buffer.pop_front();
+////                LOG(INFO) << "pop front from buffer";
+//                continue;
+//            }
+//            else
+//            {
+//                // 组装LidarMeasurement
+//                struct MeasureGroup m;
+//                m.img = m_img_buffer.front();
+//
+//                double imu_time = m_imu_buffer.front()->header.stamp.toSec();
+//                m.imu.clear();
+//
+//                while ( ( !m_imu_buffer.empty() && ( imu_time < m_lidar_end_time ) ) )
+//                {
+//                    imu_time = m_imu_buffer.front()->header.stamp.toSec();
+//                    if ( imu_time > m_lidar_end_time )
+//                        break;
+//                    m.imu.push_back( m_imu_buffer.front() );
+//                    m_imu_buffer.pop_front();
+//                }
+//
+//                // 只有所有的部分都完成了,才会继续进行处理
+//                m_lidar_pushed = false;
+//                m_lidar_buffer.pop_front();
+//                m_time_buffer.pop_front();
+//                m_img_buffer.pop_front();
+//                m_img_time_buffer.pop_front();
+//
+//                m_sig_buffer.notify_all();
+//
+//                meas.is_lidar_end = true; // process lidar topic, so timestamp should be lidar scan end.
+//                meas.measures.push_back( m );
+////                cv::imshow("dfew", meas.measures.back().img);
+////                cv::waitKey(0);
+////                LOG(INFO) << "meas.measures.size(): " << meas.measures.size();
+////                LOG(INFO) << "Finish sync measurement and the number of rejected image is"<< img_rej;
+//                return true;
+//            }
+//        }
+//        return false;
+//    }
 
 
     /* image+lidar传感器下的数据集打包策略 */
@@ -973,8 +1049,7 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     nh.param< string >( "common/imu_topic", m_imu_topic, "/livox/imu" );
     nh.param< int >( "preprocess/lidar_type", m_p_pre->lidar_type,  1);         // 1代表是avia雷达据
     nh.param<string>("image/image_topic", m_img_topic, "/camera/image_color/compressed" );
-//    m_lid_topic = "/livox/lidar";
-    m_bag_file = "/home/supercoconut/Myfile/datasets/R3LIVE/hku_campus_seq_03.bag";
+    // m_bag_file = "/home/supercoconut/Myfile/datasets/R3LIVE/hku_campus_seq_03.bag";
 
     // 相机内参(后期可以更换成ros中读取参数)
     std::vector< double > camera_intrinsic_data, camera_dist_coeffs_data, camera_ext_R_data, camera_ext_t_data;
@@ -1048,6 +1123,9 @@ void Voxel_mapping::read_ros_parameters( ros::NodeHandle &nh )
     LOG(INFO) << "g_cam_k: ";
     LOG(INFO) << g_cam_k;
 
+    m_lid_topic = "/A1/livox/lidar";
+    m_imu_topic = "/A1/livox/imu";
+
     LOG(INFO) << "Subscribing to topic: " << m_lid_topic.c_str();
     LOG(INFO) << "Subscribing to topic: " << m_imu_topic.c_str();
     LOG(INFO) << "Subscribing to topic: " << m_img_topic.c_str();
@@ -1107,7 +1185,6 @@ void Voxel_mapping::transformLidar( const Eigen::Matrix3d rot, const Eigen::Vect
 
 //////////////////////////////////新建函数////////////////////////////////////////
 /// @bug 1. 这里需要给yaml文件加上 %YAML:1.0 (与ros中直接使用的yaml文件有一点不同) 2. 对于矩阵类型的变量还是有些问题的
-
 void Voxel_mapping::readParameters(const std::string& config_file)
 {
     FILE *fh = fopen(config_file.c_str(),"r");
@@ -1302,6 +1379,7 @@ void Voxel_mapping::readParameters(const std::string& config_file)
     LOG(INFO) << "Subscribing to topic: " << m_imu_topic.c_str();
     LOG(INFO) << "Subscribing to topic: " << m_img_topic.c_str();
     // 获取rosbag中的数据
+    m_lid_topic = "/A1/livox/lidar";
     m_topics.push_back(m_lid_topic);
     m_topics.push_back(m_imu_topic);
     m_topics.push_back(m_img_topic);

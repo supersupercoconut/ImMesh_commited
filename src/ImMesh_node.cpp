@@ -41,7 +41,7 @@
 #include "mesh_rec_geometry.hpp"
 
 #include <glog/logging.h>
-#include <ImMesh/cloud_voxel.h>
+//#include <ImMesh/cloud_voxel.h>
 #include <shared_mutex>
 
 double g_maximum_pe_error = 40;
@@ -208,7 +208,7 @@ void get_last_avr_pose(int current_frame_idx, Eigen::Quaterniond &q_avr, vec_3 &
 
     for (int frame_idx = frame_s; frame_idx < current_frame_idx; frame_idx++)
     {
-        std::shared_lock lock(g_mutex_eigen_vec_vec);
+//        std::shared_lock lock(g_mutex_eigen_vec_vec);
         if (g_eigen_vec_vec[frame_idx].second.size() >= 7)  // 确保有足够的数据
         {
             Eigen::Quaterniond pose_q(g_eigen_vec_vec[frame_idx].second.head<4>());

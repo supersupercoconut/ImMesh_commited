@@ -139,7 +139,7 @@ extern std::mutex           dbg_line_mutex;
 /// @brief
 /*
  * (1) remove_triangles:当前所有的
- * (2) add_triangles: 新生成的三角(这里是将一个voxel的所有点都构建triangle, 所以其对应的部分应该全部都是)
+ * (2) add_triangles: 新生成的三角(这里是将一个voxel的所有点都构建triangle, 所以其对应的部分应该全部都是 | 与当前所有的三角进行对比, 确定哪些部分是真正需要添加的 )
  * (3) res_remove_triangles: 需要被移除的三角
  * (4) res_add_triangles: 真正需要被添加的三角
  * (5) exist_triangles: 之前存在的三角
@@ -159,7 +159,7 @@ void triangle_compare( const Triangle_set &remove_triangles, const std::vector< 
         Triangle                         tri( add_triangles[ i ], add_triangles[ i + 1 ], add_triangles[ i + 2 ] );
         std::pair< Triangle_ptr, bool > *temp_pair_ptr =
                 all_remove_triangles_list.get_data( tri.m_tri_pts_id[ 0 ], tri.m_tri_pts_id[ 1 ], tri.m_tri_pts_id[ 2 ] );
-        // 使用的C++17上面提供的解决方法
+        
         if ( temp_pair_ptr != nullptr )
         {
             temp_pair_ptr->second = false;

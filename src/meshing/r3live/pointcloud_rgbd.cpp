@@ -645,163 +645,163 @@ int Global_map::append_points_to_global_map( pcl::PointCloud< T >& pc_in, double
 ////
 ////    return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
 //
-//    m_in_appending_pts = 1;
-//    Common_tools::Timer tim;
-//    tim.tic();
-//    int acc = 0;
-//    int rej = 0;
-//    if ( pts_added_vec != nullptr )
+   m_in_appending_pts = 1;
+   Common_tools::Timer tim;
+   tim.tic();
+   int acc = 0;
+   int rej = 0;
+   if ( pts_added_vec != nullptr )
+   {
+       pts_added_vec->clear();
+   }
+
+   if ( m_recent_visited_voxel_activated_time == 0 )
+   {
+       voxels_recent_visited.clear();
+   }
+//    else
 //    {
-//        pts_added_vec->clear();
-//    }
-//
-//    if ( m_recent_visited_voxel_activated_time == 0 )
-//    {
-//        voxels_recent_visited.clear();
-//    }
-////    else
-////    {
-////        m_mutex_m_box_recent_hitted->lock();
-////        std::swap( voxels_recent_visited, m_voxels_recent_visited );
-////        m_mutex_m_box_recent_hitted->unlock();
-////        for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
-////        {
-////
-////            if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
-////            {
-////                it = voxels_recent_visited.erase( it );
-////                continue;
-////            }
-////            if ( ( *it )->m_pts_in_grid.size() )
-////            {
-////                double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
-////                // if ( voxel_dis > 30 )
-////                // {
-////                //     it = voxels_recent_visited.erase( it );
-////                //     continue;
-////                // }
-////            }
-////
-////            it++;
-////        }
-////        // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
-////    }
-//    int number_of_voxels_before_add = voxels_recent_visited.size();
-//    int pt_size = pc_in.points.size();
-//    // step = 4;
-//
-//    KDtree_pt_vector     pt_vec_vec;
-//    std::vector< float > dist_vec;
-//
-////    g_mutex_append_map.lock();
-//    RGB_voxel_ptr* temp_box_ptr_ptr;
-//    for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
-//    {
-//        int  add = 1;
-//        int  grid_x = std::round( pc_in.points[ pt_idx ].x / m_minimum_pts_size );
-//        int  grid_y = std::round( pc_in.points[ pt_idx ].y / m_minimum_pts_size );
-//        int  grid_z = std::round( pc_in.points[ pt_idx ].z / m_minimum_pts_size );
-//        int  box_x = std::round( pc_in.points[ pt_idx ].x / m_voxel_resolution );
-//        int  box_y = std::round( pc_in.points[ pt_idx ].y / m_voxel_resolution );
-//        int  box_z = std::round( pc_in.points[ pt_idx ].z / m_voxel_resolution );
-//        auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );
-//        if ( pt_ptr != nullptr )
+//        m_mutex_m_box_recent_hitted->lock();
+//        std::swap( voxels_recent_visited, m_voxels_recent_visited );
+//        m_mutex_m_box_recent_hitted->unlock();
+//        for ( Voxel_set_iterator it = voxels_recent_visited.begin(); it != voxels_recent_visited.end(); )
 //        {
-//            add = 0;
-//            if ( pts_added_vec != nullptr )
+//
+//            if ( added_time - ( *it )->m_last_visited_time > m_recent_visited_voxel_activated_time )
 //            {
-//                pts_added_vec->push_back( *pt_ptr );
+//                it = voxels_recent_visited.erase( it );
+//                continue;
 //            }
-//        }
-//
-//        /// @bug 这里的 box_ptr也会出现 {use count 1811941585 weak count 32762} 这种情况
-//        RGB_voxel_ptr box_ptr;
-//        temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
-//        if ( temp_box_ptr_ptr == nullptr )
-//        {
-//            box_ptr = std::make_shared< RGB_Voxel >( box_x, box_y, box_z );
-//            m_hashmap_voxels.insert( box_x, box_y, box_z, box_ptr );
-//            m_voxel_vec.push_back( box_ptr );
-//        }
-//        else
-//        {
-//            box_ptr = *temp_box_ptr_ptr;
-//        }
-//
-//        if (box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0) {
-//            // 处理异常引用计数情况
-//            return 0 ;
-//        }
-//
-//        voxels_recent_visited.insert( box_ptr );
-//        box_ptr->m_last_visited_time = added_time;
-//        if ( add == 0 )
-//        {
-//            rej++;
-//            continue;
-//        }
-//        if ( disable_append )
-//        {
-//            continue;
-//        }
-//        acc++;
-//        KDtree_pt kdtree_pt( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ), 0 );
-//        if ( m_kdtree.Root_Node != nullptr )
-//        {
-//            m_kdtree.Nearest_Search( kdtree_pt, 1, pt_vec_vec, dist_vec );
-//            if ( pt_vec_vec.size() )
+//            if ( ( *it )->m_pts_in_grid.size() )
 //            {
-//                if ( sqrt( dist_vec[ 0 ] ) < m_minimum_pts_size )
-//                {
-//                    continue;
-//                }
+//                double voxel_dis = ( g_current_lidar_position - vec_3( ( *it )->m_pts_in_grid[ 0 ]->get_pos() ) ).norm();
+//                // if ( voxel_dis > 30 )
+//                // {
+//                //     it = voxels_recent_visited.erase( it );
+//                //     continue;
+//                // }
 //            }
+//
+//            it++;
 //        }
-//
-//        std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
-//
-//        if(box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0)
-//            return 0;
-//
-////        g_mutex_pts_vector.lock();
-//        pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
-//        pt_rgb->m_pt_index = m_rgb_pts_vec.size();
-//        kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
-//        m_rgb_pts_vec.push_back( pt_rgb );
-////        g_mutex_pts_vector.unlock();
-//
-//
-//        m_hashmap_3d_pts.insert( grid_x, grid_y, grid_z, pt_rgb );
-//        if ( box_ptr != nullptr )
-//        {
-//            box_ptr->m_pts_in_grid.push_back( pt_rgb );
-//            // box_ptr->add_pt(pt_rgb);
-//            box_ptr->m_new_added_pts_count++;
-//            box_ptr->m_meshing_times = 0;
-//        }
-//        else
-//        {
-//            scope_color( ANSI_COLOR_RED_BOLD );
-//            for ( int i = 0; i < 100; i++ )
-//            {
-//                cout << "box_ptr is nullptr!!!" << endl;
-//            }
-//        }
-//        // Add to kdtree
-//        m_kdtree.Add_Point( kdtree_pt, false );
-//        if ( pts_added_vec != nullptr )
-//        {
-//            pts_added_vec->push_back( pt_rgb );
-//        }
+//        // cout << "Restored voxel number = " << voxels_recent_visited.size() << endl;
 //    }
-////    g_mutex_append_map.unlock();
-//
-//    m_in_appending_pts = 0;
-//    m_mutex_m_box_recent_hitted->lock();
-//    std::swap( m_voxels_recent_visited, voxels_recent_visited );
-//    // m_voxels_recent_visited = voxels_recent_visited ;
-//    m_mutex_m_box_recent_hitted->unlock();
-//    return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
+   int number_of_voxels_before_add = voxels_recent_visited.size();
+   int pt_size = pc_in.points.size();
+   // step = 4;
+
+   KDtree_pt_vector     pt_vec_vec;
+   std::vector< float > dist_vec;
+
+//    g_mutex_append_map.lock();
+   RGB_voxel_ptr* temp_box_ptr_ptr;
+   for ( long pt_idx = 0; pt_idx < pt_size; pt_idx += step )
+   {
+       int  add = 1;
+       int  grid_x = std::round( pc_in.points[ pt_idx ].x / m_minimum_pts_size );
+       int  grid_y = std::round( pc_in.points[ pt_idx ].y / m_minimum_pts_size );
+       int  grid_z = std::round( pc_in.points[ pt_idx ].z / m_minimum_pts_size );
+       int  box_x = std::round( pc_in.points[ pt_idx ].x / m_voxel_resolution );
+       int  box_y = std::round( pc_in.points[ pt_idx ].y / m_voxel_resolution );
+       int  box_z = std::round( pc_in.points[ pt_idx ].z / m_voxel_resolution );
+       auto pt_ptr = m_hashmap_3d_pts.get_data( grid_x, grid_y, grid_z );
+       if ( pt_ptr != nullptr )
+       {
+           add = 0;
+           if ( pts_added_vec != nullptr )
+           {
+               pts_added_vec->push_back( *pt_ptr );
+           }
+       }
+
+       /// @bug 这里的 box_ptr也会出现 {use count 1811941585 weak count 32762} 这种情况
+       RGB_voxel_ptr box_ptr;
+       temp_box_ptr_ptr = m_hashmap_voxels.get_data( box_x, box_y, box_z );
+       if ( temp_box_ptr_ptr == nullptr )
+       {
+           box_ptr = std::make_shared< RGB_Voxel >( box_x, box_y, box_z );
+           m_hashmap_voxels.insert( box_x, box_y, box_z, box_ptr );
+           m_voxel_vec.push_back( box_ptr );
+       }
+       else
+       {
+           box_ptr = *temp_box_ptr_ptr;
+       }
+
+       if (box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0) {
+           // 处理异常引用计数情况
+           return 0 ;
+       }
+
+       voxels_recent_visited.insert( box_ptr );
+       box_ptr->m_last_visited_time = added_time;
+       if ( add == 0 )
+       {
+           rej++;
+           continue;
+       }
+       if ( disable_append )
+       {
+           continue;
+       }
+       acc++;
+       KDtree_pt kdtree_pt( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ), 0 );
+       if ( m_kdtree.Root_Node != nullptr )
+       {
+           m_kdtree.Nearest_Search( kdtree_pt, 1, pt_vec_vec, dist_vec );
+           if ( pt_vec_vec.size() )
+           {
+               if ( sqrt( dist_vec[ 0 ] ) < m_minimum_pts_size )
+               {
+                   continue;
+               }
+           }
+       }
+
+       std::shared_ptr< RGB_pts > pt_rgb = std::make_shared< RGB_pts >();
+
+       if(box_ptr.use_count() > this_reasonable_threshold || box_ptr.use_count() < 0)
+           return 0;
+
+//        g_mutex_pts_vector.lock();
+       pt_rgb->set_pos( vec_3( pc_in.points[ pt_idx ].x, pc_in.points[ pt_idx ].y, pc_in.points[ pt_idx ].z ) );
+       pt_rgb->m_pt_index = m_rgb_pts_vec.size();
+       kdtree_pt.m_pt_idx = pt_rgb->m_pt_index;
+       m_rgb_pts_vec.push_back( pt_rgb );
+//        g_mutex_pts_vector.unlock();
+
+
+       m_hashmap_3d_pts.insert( grid_x, grid_y, grid_z, pt_rgb );
+       if ( box_ptr != nullptr )
+       {
+           box_ptr->m_pts_in_grid.push_back( pt_rgb );
+           // box_ptr->add_pt(pt_rgb);
+           box_ptr->m_new_added_pts_count++;
+           box_ptr->m_meshing_times = 0;
+       }
+       else
+       {
+           scope_color( ANSI_COLOR_RED_BOLD );
+           for ( int i = 0; i < 100; i++ )
+           {
+               cout << "box_ptr is nullptr!!!" << endl;
+           }
+       }
+       // Add to kdtree
+       m_kdtree.Add_Point( kdtree_pt, false );
+       if ( pts_added_vec != nullptr )
+       {
+           pts_added_vec->push_back( pt_rgb );
+       }
+   }
+//    g_mutex_append_map.unlock();
+
+   m_in_appending_pts = 0;
+   m_mutex_m_box_recent_hitted->lock();
+   std::swap( m_voxels_recent_visited, voxels_recent_visited );
+   // m_voxels_recent_visited = voxels_recent_visited ;
+   m_mutex_m_box_recent_hitted->unlock();
+   return ( m_voxels_recent_visited.size() - number_of_voxels_before_add );
 
 
 }
